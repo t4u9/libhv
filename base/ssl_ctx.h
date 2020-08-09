@@ -1,17 +1,14 @@
 #ifndef HV_SSL_CTX_H
 #define HV_SSL_CTX_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "hexport.h"
 
-extern void* g_ssl_ctx; // for SSL_CTX
+BEGIN_EXTERN_C
 
-int ssl_ctx_init(const char* crt_file, const char* key_file, const char* ca_file);
-int ssl_ctx_destory();
+HV_EXPORT void* ssl_ctx_instance();
+HV_EXPORT int ssl_ctx_init(const char* crt_file, const char* key_file, const char* ca_file);
+HV_EXPORT int ssl_ctx_destory();
 
-#ifdef __cplusplus
-}
-#endif
+END_EXTERN_C
 
 #endif // HV_SSL_CTX_H

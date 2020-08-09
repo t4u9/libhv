@@ -68,7 +68,7 @@ void on_connect(hio_t* io) {
 int main(int argc, char** argv) {
     if (argc < 3) {
         printf("\
-Usage: cmd [-ut] host port\n\
+Usage: nc [-ut] host port\n\
 Options:\n\
   -t        Use tcp protocol (default)\n\
   -u        Use udp protocol\n\
@@ -96,9 +96,9 @@ Examples: nc 127.0.0.1 80\n\
         printf("%s %s %d\n", protocolname, host, port);
     }
 
-    MEMCHECK;
+    HV_MEMCHECK;
 
-    hloop_t* loop = hloop_new(0);
+    hloop_t* loop = hloop_new(HLOOP_FLAG_QUIT_WHEN_NO_ACTIVE_EVENTS);
 
     // stdin
     stdinio = hread(loop, 0, recvbuf, RECV_BUFSIZE, on_stdin);

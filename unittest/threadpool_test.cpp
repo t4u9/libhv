@@ -1,10 +1,11 @@
 #include <stdio.h>
 
 #include "hthreadpool.h"
+#include "hthread.h"
 #include "htime.h"
 
 void print_task(int i) {
-    printf("thread[%x]: task[%d]\n", gettid(), i);
+    printf("thread[%ld]: task[%d]\n", hv_gettid(), i);
     sleep(1);
 }
 

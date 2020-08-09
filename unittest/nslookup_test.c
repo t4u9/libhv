@@ -5,7 +5,7 @@
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        printf("Usage: cmd domain [nameserver]\n");
+        printf("Usage: nslookup domain [nameserver]\n");
         return -1;
     }
 
@@ -15,7 +15,11 @@ int main(int argc, char* argv[]) {
 #ifdef OS_WIN
     WSADATA wsadata;
     WSAStartup(MAKEWORD(2,2), &wsadata);
+#endif
+
+#ifndef OS_LINUX
     nameserver = "114.114.114.114";
+    // nameserver = "8.8.8.8";
 #endif
 
     if (argc > 2) {

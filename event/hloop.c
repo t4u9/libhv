@@ -69,7 +69,7 @@ static int hloop_process_timers(hloop_t* loop) {
             }
             else if (timer->event_type == HEVENT_TYPE_PERIOD) {
                 hperiod_t* period = (hperiod_t*)timer;
-                timer->next_timeout = calc_next_timeout(period->minute, period->hour, period->day,
+                timer->next_timeout = cron_next_timeout(period->minute, period->hour, period->day,
                         period->week, period->month) * 1000000;
             }
             heap_insert(&loop->timers, &timer->node);
@@ -123,8 +123,8 @@ static int hloop_process_events(hloop_t* loop) {
 
     // calc blocktime
     int32_t blocktime = MAX_BLOCK_TIME;
-    hloop_update_time(loop);
     if (loop->timers.root) {
+        hloop_update_time(loop);
         uint64_t next_min_timeout = TIMER_ENTRY(loop->timers.root)->next_timeout;
         int64_t blocktime_us = next_min_timeout - hloop_now_hrtime(loop);
         if (blocktime_us <= 0) goto process_timers;
@@ -174,8 +174,8 @@ static void hloop_init(hloop_t* loop) {
     loop->sockpair[0] = loop->sockpair[1] = -1;
     hmutex_init(&loop->custom_events_mutex);
     // NOTE: init start_time here, because htimer_add use it.
-    loop->start_ms = timestamp_ms();
-    loop->start_hrtime = loop->cur_hrtime = gethrtime();
+    loop->start_ms = gettimeofday_ms();
+    loop->start_hrtime = loop->cur_hrtime = gethrtime_us();
 }
 
 static void hloop_cleanup(hloop_t* loop) {
@@ -191,7 +191,7 @@ static void hloop_cleanup(hloop_t* loop) {
     while (node != &loop->idles) {
         idle = IDLE_ENTRY(node);
         node = node->next;
-        SAFE_FREE(idle);
+        HV_FREE(idle);
     }
     list_init(&loop->idles);
     // timers
@@ -200,7 +200,7 @@ static void hloop_cleanup(hloop_t* loop) {
     while (loop->timers.root) {
         timer = TIMER_ENTRY(loop->timers.root);
         heap_dequeue(&loop->timers);
-        SAFE_FREE(timer);
+        HV_FREE(timer);
     }
     heap_init(&loop->timers, NULL);
     // ios
@@ -237,7 +237,7 @@ static void hloop_cleanup(hloop_t* loop) {
 
 hloop_t* hloop_new(int flags) {
     hloop_t* loop;
-    SAFE_ALLOC_SIZEOF(loop);
+    HV_ALLOC_SIZEOF(loop);
     memset(loop, 0, sizeof(hloop_t));
     hloop_init(loop);
     loop->flags |= flags;
@@ -247,7 +247,7 @@ hloop_t* hloop_new(int flags) {
 void hloop_free(hloop_t** pp) {
     if (pp && *pp) {
         hloop_cleanup(*pp);
-        SAFE_FREE(*pp);
+        HV_FREE(*pp);
         *pp = NULL;
     }
 }
@@ -261,17 +261,19 @@ int hloop_run(hloop_t* loop) {
             continue;
         }
         ++loop->loop_cnt;
-        if (loop->nactives == 0) break;
+        if (loop->nactives == 0 && loop->flags & HLOOP_FLAG_QUIT_WHEN_NO_ACTIVE_EVENTS) {
+            break;
+        }
         hloop_process_events(loop);
         if (loop->flags & HLOOP_FLAG_RUN_ONCE) {
             break;
         }
     }
     loop->status = HLOOP_STATUS_STOP;
-    loop->end_hrtime = gethrtime();
+    loop->end_hrtime = gethrtime_us();
     if (loop->flags & HLOOP_FLAG_AUTO_FREE) {
         hloop_cleanup(loop);
-        SAFE_FREE(loop);
+        HV_FREE(loop);
     }
     return 0;
 }
@@ -296,10 +298,10 @@ int hloop_resume(hloop_t* loop) {
 }
 
 void hloop_update_time(hloop_t* loop) {
-    loop->cur_hrtime = gethrtime();
+    loop->cur_hrtime = gethrtime_us();
     if (ABS((int64_t)hloop_now(loop) - (int64_t)time(NULL)) > 1) {
         // systemtime changed, we adjust start_ms
-        loop->start_ms = timestamp_ms() - (loop->cur_hrtime - loop->start_hrtime) / 1000;
+        loop->start_ms = gettimeofday_ms() - (loop->cur_hrtime - loop->start_hrtime) / 1000;
     }
 }
 
@@ -325,7 +327,7 @@ void* hloop_userdata(hloop_t* loop) {
 
 hidle_t* hidle_add(hloop_t* loop, hidle_cb cb, uint32_t repeat) {
     hidle_t* idle;
-    SAFE_ALLOC_SIZEOF(idle);
+    HV_ALLOC_SIZEOF(idle);
     idle->event_type = HEVENT_TYPE_IDLE;
     idle->priority = HEVENT_LOWEST_PRIORITY;
     idle->repeat = repeat;
@@ -348,10 +350,10 @@ void hidle_del(hidle_t* idle) {
     __hidle_del(idle);
 }
 
-htimer_t* htimer_add(hloop_t* loop, htimer_cb cb, uint64_t timeout, uint32_t repeat) {
+htimer_t* htimer_add(hloop_t* loop, htimer_cb cb, uint32_t timeout, uint32_t repeat) {
     if (timeout == 0)   return NULL;
     htimeout_t* timer;
-    SAFE_ALLOC_SIZEOF(timer);
+    HV_ALLOC_SIZEOF(timer);
     timer->event_type = HEVENT_TYPE_TIMEOUT;
     timer->priority = HEVENT_HIGHEST_PRIORITY;
     timer->repeat = repeat;
@@ -390,7 +392,7 @@ htimer_t* htimer_add_period(hloop_t* loop, htimer_cb cb,
         return NULL;
     }
     hperiod_t* timer;
-    SAFE_ALLOC_SIZEOF(timer);
+    HV_ALLOC_SIZEOF(timer);
     timer->event_type = HEVENT_TYPE_PERIOD;
     timer->priority = HEVENT_HIGH_PRIORITY;
     timer->repeat = repeat;
@@ -399,7 +401,7 @@ htimer_t* htimer_add_period(hloop_t* loop, htimer_cb cb,
     timer->day    = day;
     timer->month  = month;
     timer->week   = week;
-    timer->next_timeout = calc_next_timeout(minute, hour, day, week, month) * 1000000;
+    timer->next_timeout = cron_next_timeout(minute, hour, day, week, month) * 1000000;
     heap_insert(&loop->timers, &timer->node);
     EVENT_ADD(loop, timer, cb);
     loop->ntimers++;
@@ -473,12 +475,12 @@ static void hio_socket_init(hio_t* io) {
     nonblocking(io->fd);
     // fill io->localaddr io->peeraddr
     if (io->localaddr == NULL) {
-        SAFE_ALLOC(io->localaddr, sizeof(sockaddr_un));
+        HV_ALLOC(io->localaddr, sizeof(sockaddr_u));
     }
     if (io->peeraddr == NULL) {
-        SAFE_ALLOC(io->peeraddr, sizeof(sockaddr_un));
+        HV_ALLOC(io->peeraddr, sizeof(sockaddr_u));
     }
-    socklen_t addrlen = sizeof(sockaddr_un);
+    socklen_t addrlen = sizeof(sockaddr_u);
     int ret = getsockname(io->fd, io->localaddr, &addrlen);
     printd("getsockname fd=%d ret=%d errno=%d\n", io->fd, ret, socket_errno());
     // NOTE:
@@ -487,7 +489,7 @@ static void hio_socket_init(hio_t* io) {
     // tcp_client/udp_client peeraddr set by hio_setpeeraddr
     if (io->io_type == HIO_TYPE_TCP || io->io_type == HIO_TYPE_SSL) {
         // tcp acceptfd
-        addrlen = sizeof(sockaddr_un);
+        addrlen = sizeof(sockaddr_u);
         ret = getpeername(io->fd, io->peeraddr, &addrlen);
         printd("getpeername fd=%d ret=%d errno=%d\n", io->fd, ret, socket_errno());
     }
@@ -523,7 +525,7 @@ void hio_done(hio_t* io) {
     offset_buf_t* pbuf = NULL;
     while (!write_queue_empty(&io->write_queue)) {
         pbuf = write_queue_front(&io->write_queue);
-        SAFE_FREE(pbuf->base);
+        HV_FREE(pbuf->base);
         write_queue_pop_front(&io->write_queue);
     }
     write_queue_cleanup(&io->write_queue);
@@ -532,9 +534,9 @@ void hio_done(hio_t* io) {
 void hio_free(hio_t* io) {
     if (io == NULL) return;
     hio_done(io);
-    SAFE_FREE(io->localaddr);
-    SAFE_FREE(io->peeraddr);
-    SAFE_FREE(io);
+    HV_FREE(io->localaddr);
+    HV_FREE(io->peeraddr);
+    HV_FREE(io);
 }
 
 hio_t* hio_get(hloop_t* loop, int fd) {
@@ -549,7 +551,7 @@ hio_t* hio_get(hloop_t* loop, int fd) {
 
     hio_t* io = loop->ios.ptr[fd];
     if (io == NULL) {
-        SAFE_ALLOC_SIZEOF(io);
+        HV_ALLOC_SIZEOF(io);
         hio_init(io);
         io->loop = loop;
         io->fd = fd;
@@ -695,10 +697,9 @@ hio_t* create_tcp_server (hloop_t* loop, const char* host, int port, haccept_cb 
 }
 
 hio_t* create_tcp_client (hloop_t* loop, const char* host, int port, hconnect_cb connect_cb) {
-    sockaddr_un peeraddr;
-    socklen_t addrlen = sizeof(peeraddr);
-    memset(&peeraddr, 0, addrlen);
-    int ret = sockaddr_assign(&peeraddr, host, port);
+    sockaddr_u peeraddr;
+    memset(&peeraddr, 0, sizeof(peeraddr));
+    int ret = sockaddr_set_ipport(&peeraddr, host, port);
     if (ret != 0) {
         //printf("unknown host: %s\n", host);
         return NULL;
@@ -711,7 +712,7 @@ hio_t* create_tcp_client (hloop_t* loop, const char* host, int port, hconnect_cb
 
     hio_t* io = hio_get(loop, connfd);
     if (io == NULL) return NULL;
-    hio_set_peeraddr(io, &peeraddr.sa, sockaddrlen(&peeraddr));
+    hio_set_peeraddr(io, &peeraddr.sa, sockaddr_len(&peeraddr));
     hconnect(loop, connfd, connect_cb);
     return io;
 }
@@ -727,10 +728,9 @@ hio_t* create_udp_server(hloop_t* loop, const char* host, int port) {
 
 // @client: Resolver -> socket -> hio_get -> hio_set_peeraddr
 hio_t* create_udp_client(hloop_t* loop, const char* host, int port) {
-    sockaddr_un peeraddr;
-    socklen_t addrlen = sizeof(peeraddr);
-    memset(&peeraddr, 0, addrlen);
-    int ret = sockaddr_assign(&peeraddr, host, port);
+    sockaddr_u peeraddr;
+    memset(&peeraddr, 0, sizeof(peeraddr));
+    int ret = sockaddr_set_ipport(&peeraddr, host, port);
     if (ret != 0) {
         //printf("unknown host: %s\n", host);
         return NULL;
@@ -744,7 +744,7 @@ hio_t* create_udp_client(hloop_t* loop, const char* host, int port) {
 
     hio_t* io = hio_get(loop, sockfd);
     if (io == NULL) return NULL;
-    hio_set_peeraddr(io, &peeraddr.sa, sockaddrlen(&peeraddr));
+    hio_set_peeraddr(io, &peeraddr.sa, sockaddr_len(&peeraddr));
     return io;
 }
 

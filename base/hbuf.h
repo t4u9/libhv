@@ -1,12 +1,8 @@
 #ifndef HV_BUF_H_
 #define HV_BUF_H_
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "hdef.h"
-#include "hbase.h"
+#include "hdef.h"   // for MAX
+#include "hbase.h"  // for HV_ALLOC, HV_FREE
 
 typedef struct hbuf_s {
     char*  base;
@@ -66,7 +62,7 @@ public:
 
     void cleanup() {
         if (cleanup_) {
-            SAFE_FREE(base);
+            HV_FREE(base);
             len = 0;
             cleanup_ = false;
         }
@@ -76,7 +72,7 @@ public:
         if (cap == len) return;
 
         if (base == NULL) {
-            SAFE_ALLOC(base, cap);
+            HV_ALLOC(base, cap);
         }
         else {
             base = (char*)safe_realloc(base, cap, len);
@@ -228,6 +224,8 @@ public:
             _head = len;
         }
     }
+
+    void clear() {_head = _tail = _size = 0;}
 
     size_t size() {return _size;}
 

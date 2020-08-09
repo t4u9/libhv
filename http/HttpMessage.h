@@ -4,6 +4,7 @@
 #include <string>
 #include <map>
 
+#include "hexport.h"
 #include "hstring.h"
 #include "httpdef.h"
 #include "http_content.h"
@@ -20,7 +21,7 @@ struct NetAddr {
     }
 };
 
-class HttpMessage {
+class HV_EXPORT HttpMessage {
 public:
     int                 type;
     unsigned short      http_major;
@@ -36,7 +37,7 @@ public:
 #ifndef WITHOUT_HTTP_CONTENT
     Json                json;       // APPLICATION_JSON
     MultiPart           form;       // MULTIPART_FORM_DATA
-    KeyValue            kv;         // X_WWW_FORM_URLENCODED
+    hv::KeyValue        kv;         // X_WWW_FORM_URLENCODED
 
     // T=[bool, int64_t, double]
     template<typename T>
@@ -137,7 +138,7 @@ public:
 };
 
 #define DEFAULT_USER_AGENT "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"
-class HttpRequest : public HttpMessage {
+class HV_EXPORT HttpRequest : public HttpMessage {
 public:
     http_method         method;
     // scheme:[//[user[:password]@]host[:port]][/path][?query][#fragment]
@@ -189,7 +190,7 @@ public:
     void ParseUrl();
 };
 
-class HttpResponse : public HttpMessage {
+class HV_EXPORT HttpResponse : public HttpMessage {
 public:
     http_status         status_code;
 

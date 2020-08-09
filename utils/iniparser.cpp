@@ -1,16 +1,93 @@
 #include "iniparser.h"
 
+#include <list>
+#include <sstream>
+
 #include "hdef.h"
 #include "herr.h"
 #include "hstring.h"
 #include "hfile.h"
 #include "hbase.h"
 
-#include <sstream>
+/**********************************
+# div
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+[section]
+
+key = value # span
+
+# div
+***********************************/
+
+class IniNode {
+public:
+    enum Type {
+        INI_NODE_TYPE_UNKNOWN,
+        INI_NODE_TYPE_ROOT,
+        INI_NODE_TYPE_SECTION,
+        INI_NODE_TYPE_KEY_VALUE,
+        INI_NODE_TYPE_DIV,
+        INI_NODE_TYPE_SPAN,
+    } type;
+    string  label; // section|key|comment
+    string  value;
+    std::list<IniNode*>    children;
+
+    virtual ~IniNode() {
+        for (auto pNode : children) {
+            if (pNode) {
+                delete pNode;
+            }
+        }
+        children.clear();
+    }
+
+    void Add(IniNode* pNode) {
+        children.push_back(pNode);
+    }
+
+    void Del(IniNode* pNode) {
+        for (auto iter = children.begin(); iter != children.end(); ++iter) {
+            if ((*iter) == pNode) {
+                delete (*iter);
+                children.erase(iter);
+                return;
+            }
+        }
+    }
+
+    IniNode* Get(const string& label, Type type = INI_NODE_TYPE_KEY_VALUE) {
+        for (auto pNode : children) {
+            if (pNode->type == type && pNode->label == label) {
+                return pNode;
+            }
+        }
+        return NULL;
+    }
+};
+
+class IniSection : public IniNode {
+public:
+    IniSection() : IniNode(), section(label) {
+        type = INI_NODE_TYPE_SECTION;
+    }
+    string &section;
+};
+
+class IniKeyValue : public IniNode {
+public:
+    IniKeyValue() : IniNode(), key(label) {
+        type = INI_NODE_TYPE_KEY_VALUE;
+    }
+    string &key;
+};
+
+class IniComment : public IniNode {
+public:
+    IniComment() : IniNode(), comment(label) {
+    }
+    string &comment;
+};
 
 IniParser::IniParser() {
     _comment = DEFAULT_INI_COMMENT;
@@ -25,6 +102,10 @@ IniParser::~IniParser() {
 int IniParser::Unload() {
     SAFE_DELETE(root_);
     return 0;
+}
+
+int IniParser::Reload() {
+    return LoadFromFile(_filepath.c_str());
 }
 
 int IniParser::LoadFromFile(const char* filepath) {
@@ -242,35 +323,35 @@ void IniParser::SetValue(const string& key, const string& value, const string& s
 }
 
 template<>
-bool IniParser::Get(const string& key, const string& section, bool defvalue) {
+HV_EXPORT bool IniParser::Get(const string& key, const string& section, bool defvalue) {
     string str = GetValue(key, section);
     return str.empty() ? defvalue : getboolean(str.c_str());
 }
 
 template<>
-int IniParser::Get(const string& key, const string& section, int defvalue) {
+HV_EXPORT int IniParser::Get(const string& key, const string& section, int defvalue) {
     string str = GetValue(key, section);
     return str.empty() ? defvalue : atoi(str.c_str());
 }
 
 template<>
-float IniParser::Get(const string& key, const string& section, float defvalue) {
+HV_EXPORT float IniParser::Get(const string& key, const string& section, float defvalue) {
     string str = GetValue(key, section);
     return str.empty() ? defvalue : atof(str.c_str());
 }
 
 template<>
-void IniParser::Set(const string& key, const bool& value, const string& section) {
+HV_EXPORT void IniParser::Set(const string& key, const bool& value, const string& section) {
     SetValue(key, value ? "true" : "false", section);
 }
 
 template<>
-void IniParser::Set(const string& key, const int& value, const string& section) {
+HV_EXPORT void IniParser::Set(const string& key, const int& value, const string& section) {
     SetValue(key, asprintf("%d", value), section);
 }
 
 template<>
-void IniParser::Set(const string& key, const float& value, const string& section) {
+HV_EXPORT void IniParser::Set(const string& key, const float& value, const string& section) {
     SetValue(key, asprintf("%f", value), section);
 }
 

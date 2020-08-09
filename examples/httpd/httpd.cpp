@@ -3,8 +3,9 @@
 #include "iniparser.h"
 
 #include "HttpServer.h"
-#include "http_api_test.h"
 #include "ssl_ctx.h"
+
+#include "router.h"
 
 http_server_t   g_http_server;
 HttpService     g_http_service;
@@ -61,32 +62,27 @@ int parse_confile(const char* confile) {
     }
     hlog_set_file(g_main_ctx.logfile);
     // loglevel
-    const char* szLoglevel = ini.GetValue("loglevel").c_str();
-    int loglevel = LOG_LEVEL_DEBUG;
-    if (stricmp(szLoglevel, "VERBOSE") == 0) {
-        loglevel = LOG_LEVEL_VERBOSE;
-    } else if (stricmp(szLoglevel, "DEBUG") == 0) {
-        loglevel = LOG_LEVEL_DEBUG;
-    } else if (stricmp(szLoglevel, "INFO") == 0) {
-        loglevel = LOG_LEVEL_INFO;
-    } else if (stricmp(szLoglevel, "WARN") == 0) {
-        loglevel = LOG_LEVEL_WARN;
-    } else if (stricmp(szLoglevel, "ERROR") == 0) {
-        loglevel = LOG_LEVEL_ERROR;
-    } else if (stricmp(szLoglevel, "FATAL") == 0) {
-        loglevel = LOG_LEVEL_FATAL;
-    } else if (stricmp(szLoglevel, "SILENT") == 0) {
-        loglevel = LOG_LEVEL_SILENT;
-    } else {
-        loglevel = LOG_LEVEL_VERBOSE;
+    str = ini.GetValue("loglevel");
+    if (!str.empty()) {
+        hlog_set_level_by_str(str.c_str());
     }
-    hlog_set_level(loglevel);
+    // log_filesize
+    str = ini.GetValue("log_filesize");
+    if (!str.empty()) {
+        hlog_set_max_filesize_by_str(str.c_str());
+    }
     // log_remain_days
     str = ini.GetValue("log_remain_days");
     if (!str.empty()) {
         hlog_set_remain_days(atoi(str.c_str()));
     }
+    // log_fsync
+    str = ini.GetValue("log_fsync");
+    if (!str.empty()) {
+        logger_enable_fsync(hlog, getboolean(str.c_str()));
+    }
     hlogi("%s version: %s", g_main_ctx.program_name, hv_compile_version());
+    hlog_fsync();
 
     // worker_processes
     int worker_processes = 0;
@@ -101,6 +97,9 @@ int parse_confile(const char* confile) {
         }
     }
     g_http_server.worker_processes = LIMIT(0, worker_processes, MAXNUM_WORKER_PROCESSES);
+    // worker_threads
+    int worker_threads = ini.Get<int>("worker_threads");
+    g_http_server.worker_threads = LIMIT(0, worker_threads, 16);
 
     // port
     int port = 0;
@@ -227,7 +226,7 @@ int main(int argc, char** argv) {
     signal_init(on_reload);
     const char* signal = get_arg("s");
     if (signal) {
-        handle_signal(signal);
+        signal_handle(signal);
     }
 
 #ifdef OS_UNIX
@@ -239,23 +238,14 @@ int main(int argc, char** argv) {
             printf("daemon error: %d\n", ret);
             exit(-10);
         }
-        // parent process exit after daemon, so pid changed.
-        g_main_ctx.pid = getpid();
     }
 #endif
 
     // pidfile
     create_pidfile();
 
-    // HttpService
-    g_http_service.preprocessor = http_api_preprocessor;
-    g_http_service.postprocessor = http_api_postprocessor;
-#define XXX(path, method, handler) \
-    g_http_service.AddApi(path, HTTP_##method, handler);
-    HTTP_API_MAP(XXX)
-#undef XXX
-
     // http_server
+    Router::Register(g_http_service);
     g_http_server.service = &g_http_service;
     ret = http_server_run(&g_http_server);
     return ret;

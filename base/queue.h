@@ -9,10 +9,11 @@
  */
 
 #include <assert.h> // for assert
+#include <stddef.h> // for NULL
 #include <stdlib.h> // for malloc,realloc,free
 #include <string.h> // for memset,memmove
 
-#include "hbase.h"
+#include "hbase.h"  // for HV_ALLOC, HV_FREE
 
 #define QUEUE_INIT_SIZE     16
 
@@ -55,7 +56,7 @@ static inline void qtype##_init(qtype* p, int maxsize) {\
     p->_offset = 0;\
     p->size = 0;\
     p->maxsize = maxsize;\
-    SAFE_ALLOC(p->ptr, sizeof(type) * maxsize);\
+    HV_ALLOC(p->ptr, sizeof(type) * maxsize);\
 }\
 \
 static inline void qtype##_clear(qtype* p) {\
@@ -65,7 +66,7 @@ static inline void qtype##_clear(qtype* p) {\
 }\
 \
 static inline void qtype##_cleanup(qtype* p) {\
-    SAFE_FREE(p->ptr);\
+    HV_FREE(p->ptr);\
     p->_offset = p->size = p->maxsize = 0;\
 }\
 \

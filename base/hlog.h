@@ -5,6 +5,8 @@
  * hlog is thread-safe
  */
 
+#include "hexport.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,7 +47,7 @@ typedef enum {
 } log_level_e;
 
 #define DEFAULT_LOG_FILE            "default"
-#define DEFAULT_LOG_LEVEL           LOG_LEVEL_VERBOSE
+#define DEFAULT_LOG_LEVEL           LOG_LEVEL_INFO
 #define DEFAULT_LOG_REMAIN_DAYS     1
 #define DEFAULT_LOG_MAX_BUFSIZE     (1<<14)  // 16k
 #define DEFAULT_LOG_MAX_FILESIZE    (1<<24)  // 16M
@@ -54,39 +56,49 @@ typedef enum {
 // network_logger() see event/nlog.h
 typedef void (*logger_handler)(int loglevel, const char* buf, int len);
 
-void stdout_logger(int loglevel, const char* buf, int len);
-void stderr_logger(int loglevel, const char* buf, int len);
-void file_logger(int loglevel, const char* buf, int len);
+HV_EXPORT void stdout_logger(int loglevel, const char* buf, int len);
+HV_EXPORT void stderr_logger(int loglevel, const char* buf, int len);
+HV_EXPORT void file_logger(int loglevel, const char* buf, int len);
+// network_logger implement see event/nlog.h
+// HV_EXPORT void network_logger(int loglevel, const char* buf, int len);
 
 typedef struct logger_s logger_t;
-logger_t* logger_create();
-void logger_destroy(logger_t* logger);
+HV_EXPORT logger_t* logger_create();
+HV_EXPORT void logger_destroy(logger_t* logger);
 
-void logger_set_handler(logger_t* logger, logger_handler fn);
-void logger_set_level(logger_t* logger, int level);
-void logger_set_max_bufsize(logger_t* logger, unsigned int bufsize);
-void logger_enable_color(logger_t* logger, int on);
-int  logger_print(logger_t* logger, int level, const char* fmt, ...);
+HV_EXPORT void logger_set_handler(logger_t* logger, logger_handler fn);
+HV_EXPORT void logger_set_level(logger_t* logger, int level);
+// level = [VERBOSE,DEBUG,INFO,WARN,ERROR,FATAL,SILENT]
+HV_EXPORT void logger_set_level_by_str(logger_t* logger, const char* level);
+HV_EXPORT void logger_set_max_bufsize(logger_t* logger, unsigned int bufsize);
+HV_EXPORT void logger_enable_color(logger_t* logger, int on);
+HV_EXPORT int  logger_print(logger_t* logger, int level, const char* fmt, ...);
 
 // below for file logger
-void logger_set_file(logger_t* logger, const char* filepath);
-void logger_set_max_filesize(logger_t* logger, unsigned long long filesize);
-void logger_set_remain_days(logger_t* logger, int days);
-void logger_enable_fsync(logger_t* logger, int on);
-void logger_fsync(logger_t* logger);
+HV_EXPORT void logger_set_file(logger_t* logger, const char* filepath);
+HV_EXPORT void logger_set_max_filesize(logger_t* logger, unsigned long long filesize);
+// 16, 16M, 16MB
+HV_EXPORT void logger_set_max_filesize_by_str(logger_t* logger, const char* filesize);
+HV_EXPORT void logger_set_remain_days(logger_t* logger, int days);
+HV_EXPORT void logger_enable_fsync(logger_t* logger, int on);
+HV_EXPORT void logger_fsync(logger_t* logger);
+HV_EXPORT const char* logger_get_cur_file(logger_t* logger);
 
 // hlog: default logger instance
-logger_t* default_logger();
+HV_EXPORT logger_t* hv_default_logger();
 
 // macro hlog*
-#define hlog default_logger()
+#define hlog hv_default_logger()
 #define hlog_set_file(filepath)         logger_set_file(hlog, filepath)
 #define hlog_set_level(level)           logger_set_level(hlog, level)
+#define hlog_set_level_by_str(level)    logger_set_level_by_str(hlog, level)
 #define hlog_set_max_filesize(filesize) logger_set_max_filesize(hlog, filesize)
+#define hlog_set_max_filesize_by_str(filesize) logger_set_max_filesize_by_str(hlog, filesize)
 #define hlog_set_remain_days(days)      logger_set_remain_days(hlog, days)
 #define hlog_enable_fsync()             logger_enable_fsync(hlog, 1)
 #define hlog_disable_fsync()            logger_enable_fsync(hlog, 0)
 #define hlog_fsync()                    logger_fsync(hlog)
+#define hlog_get_cur_file()             logger_get_cur_file(hlog)
 
 #define hlogd(fmt, ...) logger_print(hlog, LOG_LEVEL_DEBUG, fmt " [%s:%d:%s]\n", ## __VA_ARGS__, __FILE__, __LINE__, __FUNCTION__)
 #define hlogi(fmt, ...) logger_print(hlog, LOG_LEVEL_INFO,  fmt " [%s:%d:%s]\n", ## __VA_ARGS__, __FILE__, __LINE__, __FUNCTION__)

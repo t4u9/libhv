@@ -1,14 +1,14 @@
 #ifndef HV_EVENT_H_
 #define HV_EVENT_H_
 
+#include "hloop.h"
+#include "hbuf.h"
+#include "hmutex.h"
+
 #include "array.h"
 #include "list.h"
 #include "heap.h"
 #include "queue.h"
-
-#include "hloop.h"
-#include "hbuf.h"
-#include "hmutex.h"
 
 #define HLOOP_READ_BUFSIZE  8192
 
@@ -159,7 +159,7 @@ struct hio_s {
     do {\
         EVENT_INACTIVE(ev);\
         if (!ev->pending) {\
-            SAFE_FREE(ev);\
+            HV_FREE(ev);\
         }\
     } while(0)
 

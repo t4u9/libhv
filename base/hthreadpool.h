@@ -12,9 +12,6 @@
 #include <memory>
 #include <utility>
 
-//#include "hlog.h"
-#include "hthread.h"
-
 class HThreadPool {
 public:
     using Task = std::function<void()>;
@@ -32,7 +29,6 @@ public:
             status = RUNNING;
             for (int i = 0; i < pool_size; ++i) {
                 workers.emplace_back(std::thread([this]{
-                    //hlogd("work thread[%X] running...", gettid());
                     while (status != STOP) {
                         while (status == PAUSE) {
                             std::this_thread::yield();

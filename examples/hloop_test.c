@@ -1,5 +1,6 @@
 #include "hloop.h"
 #include "hbase.h"
+#include "hlog.h"
 #include "nlog.h"
 
 void mylogger(int loglevel, const char* buf, int len) {
@@ -15,13 +16,15 @@ void mylogger(int loglevel, const char* buf, int len) {
 }
 
 void on_idle(hidle_t* idle) {
-    printf("on_idle: event_id=%lu\tpriority=%d\tuserdata=%ld\n", hevent_id(idle), hevent_priority(idle), (long)(hevent_userdata(idle)));
+    printf("on_idle: event_id=%llu\tpriority=%d\tuserdata=%ld\n",
+        LLU(hevent_id(idle)), hevent_priority(idle), (long)(intptr_t)(hevent_userdata(idle)));
 }
 
 void on_timer(htimer_t* timer) {
     hloop_t* loop = hevent_loop(timer);
-    printf("on_timer: event_id=%lu\tpriority=%d\tuserdata=%ld\ttime=%lus\thrtime=%luus\n",
-        hevent_id(timer), hevent_priority(timer), (long)(hevent_userdata(timer)), hloop_now(loop), hloop_now_hrtime(loop));
+    printf("on_timer: event_id=%llu\tpriority=%d\tuserdata=%ld\ttime=%llus\thrtime=%lluus\n",
+        LLU(hevent_id(timer)), hevent_priority(timer), (long)(intptr_t)(hevent_userdata(timer)),
+        LLU(hloop_now(loop)), LLU(hloop_now_hrtime(loop)));
 }
 
 void cron_hourly(htimer_t* timer) {
@@ -51,7 +54,7 @@ void on_custom_events(hevent_t* ev) {
 
 int main() {
     // memcheck atexit
-    MEMCHECK;
+    HV_MEMCHECK;
 
     hloop_t* loop = hloop_new(0);
 
@@ -64,7 +67,7 @@ int main() {
     // test timer timeout
     for (int i = 1; i <= 10; ++i) {
         htimer_t* timer = htimer_add(loop, on_timer, i*1000, 3);
-        hevent_set_userdata(timer, (void*)(long)i);
+        hevent_set_userdata(timer, (void*)(intptr_t)i);
     }
 
     // test timer period
@@ -75,13 +78,15 @@ int main() {
     htimer_add(loop, timer_write_log, 1000, INFINITE);
     logger_set_handler(hlog, mylogger);
     hlog_set_file("loop.log");
+#ifndef _MSC_VER
     logger_enable_color(hlog, 1);
+#endif
     nlog_listen(loop, DEFAULT_LOG_PORT);
 
     // test nonblock stdin
     printf("input 'quit' to quit loop\n");
     char buf[64];
-    hread(loop, STDIN_FILENO, buf, sizeof(buf), on_stdin);
+    hread(loop, 0, buf, sizeof(buf), on_stdin);
 
     // test custom_events
     for (int i = 0; i < 10; ++i) {

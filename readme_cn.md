@@ -10,6 +10,7 @@
 - cross-platform (Linux, Windows, Mac)
 - event-loop (IO, timer, idle)
 - ENABLE_IPV6
+- ENABLE_UDS (Unix Domain Socket)
 - WITH_OPENSSL
 - http client/server (include https http1/x http2 grpc)
 - http web service, indexof service, api service (support RESTful API)
@@ -18,7 +19,7 @@
     - ftp
     - smtp
 - apps
-    - ls
+    - ls,mkdir_p,rmdir_p
     - ifconfig
     - ping
     - nc
@@ -30,6 +31,9 @@
     - curl
 
 ## 入门
+```
+./getting_started.sh
+```
 
 ### HTTP
 #### http server
@@ -37,15 +41,13 @@ see `examples/httpd/httpd.cpp`
 ```c++
 #include "HttpServer.h"
 
-int http_api_echo(HttpRequest* req, HttpResponse* res) {
-    res->body = req->body;
-    return 0;
-}
-
 int main() {
     HttpService service;
     service.base_url = "/v1/api";
-    service.AddApi("/echo", HTTP_POST, http_api_echo);
+    service.POST("/echo", [](HttpRequest* req, HttpResponse* res) {
+        res->body = req->body;
+        return 200;
+    });
 
     http_server_t server;
     server.port = 8080;
@@ -94,18 +96,19 @@ bin/curl -v localhost:8080
 bin/curl -v localhost:8080/downloads/
 
 # http api service
-bin/curl -v localhost:8080/v1/api/hello
-bin/curl -v localhost:8080/v1/api/echo -d "hello,world!"
-bin/curl -v localhost:8080/v1/api/query?page_no=1\&page_size=10
-bin/curl -v localhost:8080/v1/api/kv   -H "Content-Type:application/x-www-form-urlencoded" -d 'user=admin&pswd=123456'
-bin/curl -v localhost:8080/v1/api/json -H "Content-Type:application/json" -d '{"user":"admin","pswd":"123456"}'
-bin/curl -v localhost:8080/v1/api/form -F "file=@LICENSE"
+bin/curl -v localhost:8080/ping
+bin/curl -v localhost:8080/echo -d "hello,world!"
+bin/curl -v localhost:8080/query?page_no=1\&page_size=10
+bin/curl -v localhost:8080/kv   -H "Content-Type:application/x-www-form-urlencoded" -d 'user=admin&pswd=123456'
+bin/curl -v localhost:8080/json -H "Content-Type:application/json" -d '{"user":"admin","pswd":"123456"}'
+bin/curl -v localhost:8080/form -F "user=admin pswd=123456"
+bin/curl -v localhost:8080/upload -F "file=@LICENSE"
 
-bin/curl -v localhost:8080/v1/api/test -H "Content-Type:application/x-www-form-urlencoded" -d 'bool=1&int=123&float=3.14&string=hello'
-bin/curl -v localhost:8080/v1/api/test -H "Content-Type:application/json" -d '{"bool":true,"int":123,"float":3.14,"string":"hello"}'
-bin/curl -v localhost:8080/v1/api/test -F 'bool=1 int=123 float=3.14 string=hello'
+bin/curl -v localhost:8080/test -H "Content-Type:application/x-www-form-urlencoded" -d 'bool=1&int=123&float=3.14&string=hello'
+bin/curl -v localhost:8080/test -H "Content-Type:application/json" -d '{"bool":true,"int":123,"float":3.14,"string":"hello"}'
+bin/curl -v localhost:8080/test -F 'bool=1 int=123 float=3.14 string=hello'
 # RESTful API: /group/:group_name/user/:user_id
-bin/curl -v -X DELETE localhost:8080/v1/api/group/test/user/123
+bin/curl -v -X DELETE localhost:8080/group/test/user/123
 
 # webbench (linux only)
 make webbench
@@ -158,6 +161,10 @@ bin/nc 127.0.0.1 1111
 
 bin/udp 2222
 bin/nc -u 127.0.0.1 2222
+
+make hloop_test
+bin/hloop_test
+bin/nc 127.0.0.1 10514
 ```
 
 ## 构建
@@ -168,15 +175,12 @@ bin/nc -u 127.0.0.1 2222
 
 ### 示例
 - make examples
-    - make test # master-workers model
-    - make timer # timer add/del/reset
-    - make loop # event-loop(include idle, timer, io)
-    - make tcp  # tcp server
-    - make udp  # udp server
-    - make nc   # network client
-    - make nmap # host discovery
+    - make tcp   # tcp server
+    - make udp   # udp server
+    - make nc    # network client
+    - make nmap  # host discovery
     - make httpd # http server
-    - make curl # http client
+    - make curl  # http client
 
 ### 单元测试
 - make unittest
@@ -250,6 +254,7 @@ sudo echo-servers/benchmark.sh
 ### base
 - hplatform.h:   平台相关宏
 - hdef.h:        宏定义
+- hatomic.h:     原子操作
 - hversion.h:    版本
 - hbase.h:       基本接口
 - hsysinfo.h:    系统信息
@@ -291,6 +296,7 @@ sudo echo-servers/benchmark.sh
 - EVENT_POLL
 - EVENT_EPOLL   (linux only)
 - EVENT_KQUEUE  (mac/bsd)
+- EVENT_PORT    (solaris)
 - EVENT_IOCP    (windows only)
 
 ### http
@@ -304,5 +310,5 @@ sudo echo-servers/benchmark.sh
 
 ## 学习资料
 
-- libhv每日一学博客: <https://hewei.blog.csdn.net/article/details/103903123>
+- libhv 博客专栏: <https://hewei.blog.csdn.net/category_9866493.html>
 - libhv QQ群`739352073`，欢迎加群讨论

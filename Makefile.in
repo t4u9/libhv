@@ -54,6 +54,9 @@ endif
 ifneq ($(findstring android, $(TARGET_PLATFORM)), )
 	OS=Android
 endif
+ifneq ($(findstring darwin, $(TARGET_PLATFORM)), )
+	OS=Darwin
+endif
 ifndef OS
 	OS=Linux
 endif
@@ -122,6 +125,18 @@ ifeq ($(BUILD_TYPE), DEBUG)
 	CPPFLAGS += -DDEBUG
 else
 	CPPFLAGS += -DNDEBUG
+endif
+
+ifeq ($(ENABLE_IPV6), yes)
+	CPPFLAGS += -DENABLE_IPV6
+endif
+
+ifeq ($(ENABLE_UDS), yes)
+	CPPFLAGS += -DENABLE_UDS
+endif
+
+ifeq ($(USE_MULTIMAP), yes)
+	CPPFLAGS += -DUSE_MULTIMAP
 endif
 
 CPPFLAGS += $(addprefix -D, $(DEFINES))
@@ -223,13 +238,19 @@ ifneq ($(findstring SHARED, $(TARGET_TYPE)), )
 ifeq ($(OS), Windows)
 	$(CC) -shared $^ -o $(LIBDIR)/$@.dll $(LDFLAGS) -Wl,--output-def,$(LIBDIR)/$(@).def
 else
+ifeq ($(OS), Darwin)
+	$(CC) -dynamiclib -install_name @rpath/$@.dylib $^ -o $(LIBDIR)/$@.dylib $(LDFLAGS)
+else
 	$(CC) -shared $^ -o $(LIBDIR)/$@.so $(LDFLAGS)
+endif
 endif
 endif
 
 ifneq ($(findstring STATIC, $(TARGET_TYPE)), )
 	$(AR) $(ARFLAGS) $(LIBDIR)/$@.a $^
-else
+endif
+
+ifneq ($(findstring EXECUTABLE, $(TARGET_TYPE)), )
 ifeq ($(OS), Windows)
 	$(CC) $^ -o $(BINDIR)/$@.exe $(LDFLAGS)
 else

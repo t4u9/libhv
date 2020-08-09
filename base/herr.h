@@ -3,6 +3,8 @@
 
 #include <errno.h>
 
+#include "hexport.h"
+
 #ifndef SYS_NERR
 #define SYS_NERR    133
 #endif
@@ -82,7 +84,7 @@
     F(3011, DEVICE_DISABLE,         "device disable")       \
     F(3012, DEVICE_BUSY,            "device busy")          \
 
-// grpc [4000+]
+// grpc [4xxx]
 #define FOREACH_ERR_GRPC(F)     \
     F(4000, GRPC_FIRST,                     "grpc no error")                \
     F(4001, GRPC_STATUS_CANCELLED,          "grpc status: cancelled")       \
@@ -119,7 +121,7 @@ extern "C" {
 #endif
 
 // errcode => errmsg
-const char* hv_strerror(int err);
+HV_EXPORT const char* hv_strerror(int err);
 
 #ifdef __cplusplus
 } // extern "C"

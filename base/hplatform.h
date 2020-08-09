@@ -18,17 +18,10 @@
     #include <TargetConditionals.h>
     #if defined(TARGET_OS_MAC) && TARGET_OS_MAC
         #define OS_MAC
-        #define OS_DARWIN
-        #ifdef __LP64__
-            #define OS_DARWIN64
-        #else
-            #define OS_DARWIN32
-        #endif
     #elif defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
         #define OS_IOS
-    #else
-        #define OS_MACOS
     #endif
+    #define OS_DARWIN
 #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
     #define OS_FREEBSD
     #define OS_BSD
@@ -38,6 +31,8 @@
 #elif defined(__OpenBSD__)
     #define OS_OPENBSD
     #define OS_BSD
+#elif defined(sun) || defined(__sun) || defined(__sun__)
+    #define OS_SOLARIS
 #else
     #error "Unsupported operating system platform!"
 #endif
@@ -47,37 +42,6 @@
     #define OS_WIN
 #else
     #define OS_UNIX
-#endif
-
-// CC
-// _MSC_VER
-#ifdef _MSC_VER
-#pragma warning (disable: 4100) // unused param
-#pragma warning (disable: 4819) // Unicode
-#pragma warning (disable: 4996) // _CRT_SECURE_NO_WARNINGS
-#endif
-
-// __MINGW32__
-// __GNUC__
-#ifdef __GNUC__
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE 1
-#endif
-#endif
-// __clang__
-
-#ifdef HV_STATICLIB
-#define HEXPORT
-#elif defined(OS_WIN)
-#ifdef DLL_EXPORTS
-#define HEXPORT  __declspec(dllexport)
-#else
-#define HEXPORT  __declspec(dllimport)
-#endif
-#elif defined(__GNUC__)
-#define HEXPORT  __attribute__((visibility("default")))
-#else
-#define HEXPORT
 #endif
 
 // ARCH
@@ -91,26 +55,81 @@
     #define ARCH_ARM
 #elif defined(__aarch64__) || defined(__ARM64__)
     #define ARCH_ARM64
+#else
+    #define ARCH_UNKNOWN
+    #warning "Unknown hardware architecture!"
 #endif
 
-// ENDIAN
-#ifndef BIG_ENDIAN
-    #define BIG_ENDIAN      4321
-#endif
-#ifndef LITTLE_ENDIAN
-    #define LITTLE_ENDIAN   1234
-#endif
-#define NET_ENDIAN     BIG_ENDIAN
+// COMPILER
+#if defined (_MSC_VER)
+#define COMPILER_MSVC
 
-#ifndef BYTE_ORDER
-#if defined(ARCH_X86) || defined(ARCH_X86_64) || defined(__ARMEL__)
-    #define BYTE_ORDER LITTLE_ENDIAN
-#elif defined(__ARMEB__)
-    #define BYTE_ORDER BIG_ENDIAN
-#endif
+#if (_MSC_VER < 1200) // Visual C++ 6.0
+#define MSVS_VERSION    1998
+#define MSVC_VERSION    60
+#elif (_MSC_VER >= 1200) && (_MSC_VER < 1300) // Visual Studio 2002, MSVC++ 7.0
+#define MSVS_VERSION    2002
+#define MSVC_VERSION    70
+#elif (_MSC_VER >= 1300) && (_MSC_VER < 1400) // Visual Studio 2003, MSVC++ 7.1
+#define MSVS_VERSION    2003
+#define MSVC_VERSION    71
+#elif (_MSC_VER >= 1400) && (_MSC_VER < 1500) // Visual Studio 2005, MSVC++ 8.0
+#define MSVS_VERSION    2005
+#define MSVC_VERSION    80
+#elif (_MSC_VER >= 1500) && (_MSC_VER < 1600) // Visual Studio 2008, MSVC++ 9.0
+#define MSVS_VERSION    2008
+#define MSVC_VERSION    90
+#elif (_MSC_VER >= 1600) && (_MSC_VER < 1700) // Visual Studio 2010, MSVC++ 10.0
+#define MSVS_VERSION    2010
+#define MSVC_VERSION    100
+#elif (_MSC_VER >= 1700) && (_MSC_VER < 1800) // Visual Studio 2012, MSVC++ 11.0
+#define MSVS_VERSION    2012
+#define MSVC_VERSION    110
+#elif (_MSC_VER >= 1800) && (_MSC_VER < 1900) // Visual Studio 2013, MSVC++ 12.0
+#define MSVS_VERSION    2013
+#define MSVC_VERSION    120
+#elif (_MSC_VER >= 1900) && (_MSC_VER < 1910) // Visual Studio 2015, MSVC++ 14.0
+#define MSVS_VERSION    2015
+#define MSVC_VERSION    140
+#elif (_MSC_VER >= 1910) && (_MSC_VER < 1920) // Visual Studio 2017, MSVC++ 15.0
+#define MSVS_VERSION    2017
+#define MSVC_VERSION    150
+#elif (_MSC_VER >= 1920) && (_MSC_VER < 2000) // Visual Studio 2019, MSVC++ 16.0
+#define MSVS_VERSION    2019
+#define MSVC_VERSION    160
 #endif
 
-// header files
+#undef  HAVE_STDATOMIC_H
+#define HAVE_STDATOMIC_H        0
+#undef  HAVE_SYS_TIME_H
+#define HAVE_SYS_TIME_H         0
+#undef  HAVE_PTHREAD_H
+#define HAVE_PTHREAD_H          0
+
+#pragma warning (disable: 4018) // signed/unsigned comparison
+#pragma warning (disable: 4100) // unused param
+#pragma warning (disable: 4251) // STL dll
+#pragma warning (disable: 4819) // Unicode
+#pragma warning (disable: 4996) // _CRT_SECURE_NO_WARNINGS
+
+#elif defined(__MINGW32__) || defined(__MINGW64__)
+#define COMPILER_MINGW
+
+#elif defined(__GNUC__)
+#define COMPILER_GCC
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
+
+#elif defined(__clang__)
+#define COMPILER_CLANG
+
+#else
+#warning "Untested compiler!"
+#endif
+
+// headers
 #ifdef OS_WIN
     #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
@@ -125,7 +144,9 @@
     #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
     #include <io.h>         // for open,close,read,write,lseek,tell
 
-    #define MKDIR(dir)      mkdir(dir)
+    #define hv_delay(ms)    Sleep(ms)
+    #define hv_mkdir(dir)   mkdir(dir)
+
     #ifndef S_ISREG
     #define S_ISREG(st_mode) (((st_mode) & S_IFMT) == S_IFREG)
     #endif
@@ -145,7 +166,44 @@
     #include <netinet/udp.h>
     #include <netdb.h>  // for gethostbyname
 
-    #define MKDIR(dir)      mkdir(dir, 0777)
+    #define hv_delay(ms)    usleep((ms)*1000)
+    #define hv_mkdir(dir)   mkdir(dir, 0777)
+#endif
+
+#ifdef _MSC_VER
+    typedef int pid_t;
+    typedef int gid_t;
+    typedef int uid_t;
+    #define strcasecmp  stricmp
+    #define strncasecmp strnicmp
+#else
+    typedef int                 BOOL;
+    typedef unsigned char       BYTE;
+    typedef unsigned short      WORD;
+    typedef void*               HANDLE;
+    #include <strings.h>
+    #define stricmp     strcasecmp
+    #define strnicmp    strncasecmp
+#endif
+
+// ENDIAN
+#ifndef BIG_ENDIAN
+#define BIG_ENDIAN      4321
+#endif
+#ifndef LITTLE_ENDIAN
+#define LITTLE_ENDIAN   1234
+#endif
+#ifndef NET_ENDIAN
+#define NET_ENDIAN      BIG_ENDIAN
+#endif
+
+// BYTE_ORDER
+#ifndef BYTE_ORDER
+#if defined(ARCH_X86) || defined(ARCH_X86_64) || defined(__ARMEL__)
+#define BYTE_ORDER      LITTLE_ENDIAN
+#elif defined(__ARMEB__)
+#define BYTE_ORDER      BIG_ENDIAN
+#endif
 #endif
 
 // ANSI C
@@ -158,13 +216,27 @@
 #include <ctype.h>
 #include <float.h>
 #include <limits.h>
+#include <errno.h>
 #include <time.h>
 #include <math.h>
-#include <errno.h>
 #include <signal.h>
 
+#ifndef __cplusplus
 #if HAVE_STDBOOL_H
 #include <stdbool.h>
+#else
+    #ifndef bool
+    #define bool char
+    #endif
+
+    #ifndef true
+    #define ture 1
+    #endif
+
+    #ifndef false
+    #define false 0
+    #endif
+#endif
 #endif
 
 #if HAVE_STDINT_H
@@ -180,6 +252,23 @@ typedef unsigned __int32    uint32_t;
 typedef unsigned __int64    uint64_t;
 #endif
 
+typedef float               float32_t;
+typedef double              float64_t;
+
+// sizeof(var) = 8
+typedef union {
+    bool        b;
+    char        ch;
+    char*       str;
+    long long   num;
+    float       f;
+    double      lf;
+    void*       ptr;
+} var;
+
+typedef int (*method_t)(void* userdata);
+typedef void (*procedure_t)(void* userdata);
+
 #if HAVE_SYS_TYPES_H
 #include <sys/types.h>
 #endif
@@ -188,20 +277,16 @@ typedef unsigned __int64    uint64_t;
 #include <sys/stat.h>
 #endif
 
-#if HAVE_FCNTL_H
-#include <fcntl.h>
-#endif
-
-#ifndef _MSC_VER
-
 #if HAVE_SYS_TIME_H
 #include <sys/time.h>   // for gettimeofday
 #endif
 
-#if HAVE_PTHREAD_H
-#include <pthread.h>
+#if HAVE_FCNTL_H
+#include <fcntl.h>
 #endif
 
+#if HAVE_PTHREAD_H
+#include <pthread.h>
 #endif
 
 #endif // HV_PLATFORM_H_

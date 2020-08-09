@@ -3,46 +3,32 @@
 #include <string.h>
 
 #include "htime.h"
+#include "hlog.h"
 #include "http_parser.h" // for http_parser_url
 
 #ifndef WITHOUT_HTTP_CONTENT
 // NOTE: json ignore number/string, 123/"123"
-using nlohmann::detail::value_t;
 
 std::string HttpMessage::GetString(const char* key, const std::string& defvalue) {
     switch (content_type) {
     case APPLICATION_JSON:
     {
-        auto iter = json.find(key);
-        if (iter != json.end()) {
-            switch (iter->type()) {
-            case value_t::null:
-                return "null";
-            case value_t::string:
-                return *iter;
-            case value_t::boolean:
-            {
-                bool b = *iter;
-                return b ? "true" : "false";
-            }
-            case value_t::number_integer:
-            {
-                std::int64_t n = *iter;
-                return hv::to_string(n);
-            }
-            case value_t::number_unsigned:
-            {
-                std::uint64_t n = *iter;
-                return hv::to_string(n);
-            }
-            case value_t::number_float:
-            {
-                double f = *iter;
-                return hv::to_string(f);
-            }
-            default:
-                return defvalue;
-            }
+        auto value = json[key];
+        if (value.is_string()) {
+            return value;
+        }
+        else if (value.is_number()) {
+            return hv::to_string(value);
+        }
+        else if (value.is_null()) {
+            return "null";
+        }
+        else if (value.is_boolean()) {
+            bool b = value;
+            return b ? "true" : "false";
+        }
+        else {
+            return defvalue;
         }
     }
         break;
@@ -69,42 +55,26 @@ std::string HttpMessage::GetString(const char* key, const std::string& defvalue)
 }
 
 template<>
-int64_t HttpMessage::Get(const char* key, int64_t defvalue) {
+HV_EXPORT int64_t HttpMessage::Get(const char* key, int64_t defvalue) {
     if (content_type == APPLICATION_JSON) {
-        auto iter = json.find(key);
-        if (iter != json.end()) {
-            switch (iter->type()) {
-                return *iter;
-            case value_t::boolean:
-            {
-                bool b = *iter;
-                return b;
-            }
-            case value_t::number_integer:
-            {
-                std::int64_t n = *iter;
-                return n;
-            }
-            case value_t::number_unsigned:
-            {
-                std::uint64_t n = *iter;
-                return n;
-            }
-            case value_t::number_float:
-            {
-                double f = *iter;
-                return f;
-            }
-            case value_t::string:
-            {
-                std::string str = *iter;
-                return atoll(str.c_str());
-            }
-            default:
-                return defvalue;
-            }
+        auto value = json[key];
+        if (value.is_number()) {
+            return value;
         }
-        return defvalue;
+        else if (value.is_string()) {
+            std::string str = value;
+            return atoll(str.c_str());
+        }
+        else if (value.is_null()) {
+            return 0;
+        }
+        else if (value.is_boolean()) {
+            bool b = value;
+            return b ? 1 : 0;
+        }
+        else {
+            return defvalue;
+        }
     }
     else {
         std::string str = GetString(key);
@@ -113,42 +83,22 @@ int64_t HttpMessage::Get(const char* key, int64_t defvalue) {
 }
 
 template<>
-double HttpMessage::Get(const char* key, double defvalue) {
+HV_EXPORT double HttpMessage::Get(const char* key, double defvalue) {
     if (content_type == APPLICATION_JSON) {
-        auto iter = json.find(key);
-        if (iter != json.end()) {
-            switch (iter->type()) {
-                return *iter;
-            case value_t::boolean:
-            {
-                bool b = *iter;
-                return b;
-            }
-            case value_t::number_integer:
-            {
-                std::int64_t n = *iter;
-                return n;
-            }
-            case value_t::number_unsigned:
-            {
-                std::uint64_t n = *iter;
-                return n;
-            }
-            case value_t::number_float:
-            {
-                double f = *iter;
-                return f;
-            }
-            case value_t::string:
-            {
-                std::string str = *iter;
-                return atof(str.c_str());
-            }
-            default:
-                return defvalue;
-            }
+        auto value = json[key];
+        if (value.is_number()) {
+            return value;
         }
-        return defvalue;
+        else if (value.is_string()) {
+            std::string str = value;
+            return atof(str.c_str());
+        }
+        else if (value.is_null()) {
+            return 0.0f;
+        }
+        else {
+            return defvalue;
+        }
     }
     else {
         std::string str = GetString(key);
@@ -157,42 +107,25 @@ double HttpMessage::Get(const char* key, double defvalue) {
 }
 
 template<>
-bool HttpMessage::Get(const char* key, bool defvalue) {
+HV_EXPORT bool HttpMessage::Get(const char* key, bool defvalue) {
     if (content_type == APPLICATION_JSON) {
-        auto iter = json.find(key);
-        if (iter != json.end()) {
-            switch (iter->type()) {
-                return *iter;
-            case value_t::boolean:
-            {
-                bool b = *iter;
-                return b;
-            }
-            case value_t::number_integer:
-            {
-                std::int64_t n = *iter;
-                return n;
-            }
-            case value_t::number_unsigned:
-            {
-                std::uint64_t n = *iter;
-                return n;
-            }
-            case value_t::number_float:
-            {
-                double f = *iter;
-                return f;
-            }
-            case value_t::string:
-            {
-                std::string str = *iter;
-                return getboolean(str.c_str());
-            }
-            default:
-                return defvalue;
-            }
+        auto value = json[key];
+        if (value.is_boolean()) {
+            return value;
         }
-        return defvalue;
+        else if (value.is_string()) {
+            std::string str = value;
+            return getboolean(str.c_str());
+        }
+        else if (value.is_null()) {
+            return false;
+        }
+        else if (value.is_number()) {
+            return value != 0;
+        }
+        else {
+            return defvalue;
+        }
     }
     else {
         std::string str = GetString(key);
@@ -333,7 +266,14 @@ int HttpMessage::ParseBody() {
 #ifndef WITHOUT_HTTP_CONTENT
     switch(content_type) {
     case APPLICATION_JSON:
-        return parse_json(body.c_str(), json);
+    {
+        std::string errmsg;
+        int ret = parse_json(body.c_str(), json, errmsg);
+        if (ret != 0 && errmsg.size() != 0) {
+            hloge("%s", errmsg.c_str());
+        }
+        return ret;
+    }
     case MULTIPART_FORM_DATA:
     {
         auto iter = headers.find("Content-Type");
@@ -345,7 +285,9 @@ int HttpMessage::ParseBody() {
             return false;
         }
         boundary += strlen("boundary=");
-        return parse_multipart(body, form, boundary);
+        string strBoundary(boundary);
+        strBoundary = trim_pairs(strBoundary, "\"\"\'\'");
+        return parse_multipart(body, form, strBoundary.c_str());
     }
     case X_WWW_FORM_URLENCODED:
         return parse_query_params(body.c_str(), kv);

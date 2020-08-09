@@ -1,5 +1,12 @@
 #include "hsocket.h"
 
+#include "hdef.h"
+
+static inline int socket_errno_negative() {
+    int err = socket_errno();
+    return err > 0 ? -err : -1;
+}
+
 const char* socket_strerror(int err) {
 #ifdef OS_WIN
     static char buffer[128];
@@ -7,15 +14,15 @@ const char* socket_strerror(int err) {
     FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM |
         FORMAT_MESSAGE_IGNORE_INSERTS |
         FORMAT_MESSAGE_MAX_WIDTH_MASK,
-        0, err, 0, buffer, sizeof(buffer), NULL);
+        0, ABS(err), 0, buffer, sizeof(buffer), NULL);
 
     return buffer;
 #else
-    return strerror(err);
+    return strerror(ABS(err));
 #endif
 }
 
-int Resolver(const char* host, sockaddr_un* addr) {
+int Resolver(const char* host, sockaddr_u* addr) {
     if (inet_pton(AF_INET, host, &addr->sin.sin_addr) == 1) {
         addr->sa.sa_family = AF_INET; // host is ipv4, so easy ;)
         return 0;
@@ -42,7 +49,7 @@ int Resolver(const char* host, sockaddr_un* addr) {
 #else
     struct hostent* phe = gethostbyname(host);
     if (phe == NULL) {
-        printd("unknown host %s err:%d:%s\n", host, h_errno, hstrerror(h_errno));
+        printd("unknown host %s err:%d\n", host, h_errno);
         return -h_errno;
     }
     addr->sin.sin_family = AF_INET;
@@ -51,29 +58,12 @@ int Resolver(const char* host, sockaddr_un* addr) {
     return 0;
 }
 
-int Bind(int port, const char* host, int type) {
-#ifdef OS_WIN
-    static int s_wsa_initialized = 0;
-    if (s_wsa_initialized == 0) {
-        s_wsa_initialized = 1;
-        WSADATA wsadata;
-        WSAStartup(MAKEWORD(2,2), &wsadata);
-    }
-#endif
-    sockaddr_un localaddr;
-    socklen_t addrlen = sizeof(localaddr);
-    memset(&localaddr, 0, addrlen);
-    int ret = sockaddr_assign(&localaddr, host, port);
-    if (ret != 0) {
-        printf("unknown host: %s\n", host);
-        return ret;
-    }
-
+static int sockaddr_bind(sockaddr_u* localaddr, int type) {
     // socket -> setsockopt -> bind
-    int sockfd = socket(localaddr.sa.sa_family, type, 0);
+    int sockfd = socket(localaddr->sa.sa_family, type, 0);
     if (sockfd < 0) {
         perror("socket");
-        return -socket_errno();
+        return socket_errno_negative();
     }
 
     // NOTE: SO_REUSEADDR means that you can reuse sockaddr of TIME_WAIT status
@@ -83,7 +73,7 @@ int Bind(int port, const char* host, int type) {
         goto error;
     }
 
-    if (bind(sockfd, &localaddr.sa, sockaddrlen(&localaddr)) < 0) {
+    if (bind(sockfd, &localaddr->sa, sockaddr_len(localaddr)) < 0) {
         perror("bind");
         goto error;
     }
@@ -91,65 +81,48 @@ int Bind(int port, const char* host, int type) {
     return sockfd;
 error:
     closesocket(sockfd);
-    return socket_errno() > 0 ? -socket_errno() : -1;
+    return socket_errno_negative();
 }
 
-int Listen(int port, const char* host) {
-    int sockfd = Bind(port, host, SOCK_STREAM);
-    if (sockfd < 0) return sockfd;
-    if (listen(sockfd, SOMAXCONN) < 0) {
-        perror("listen");
-        goto error;
-    }
-    return sockfd;
-error:
-    closesocket(sockfd);
-    return socket_errno() > 0 ? -socket_errno() : -1;
-}
-
-int Connect(const char* host, int port, int nonblock) {
-    // Resolver -> socket -> nonblocking -> connect
-    sockaddr_un peeraddr;
-    socklen_t addrlen = sizeof(peeraddr);
-    memset(&peeraddr, 0, addrlen);
-    int ret = sockaddr_assign(&peeraddr, host, port);
-    if (ret != 0) {
-        //printf("unknown host: %s\n", host);
-        return ret;
-    }
-    int connfd = socket(peeraddr.sa.sa_family, SOCK_STREAM, 0);
+static int sockaddr_connect(sockaddr_u* peeraddr, int nonblock) {
+    // socket -> nonblocking -> connect
+    int connfd = socket(peeraddr->sa.sa_family, SOCK_STREAM, 0);
     if (connfd < 0) {
         perror("socket");
-        return -socket_errno();
+        return socket_errno_negative();
     }
+
     if (nonblock) {
         nonblocking(connfd);
     }
-    ret = connect(connfd, &peeraddr.sa, sockaddrlen(&peeraddr));
+
+    int ret = connect(connfd, &peeraddr->sa, sockaddr_len(peeraddr));
 #ifdef OS_WIN
     if (ret < 0 && socket_errno() != WSAEWOULDBLOCK) {
 #else
     if (ret < 0 && socket_errno() != EINPROGRESS) {
 #endif
         perror("connect");
-        goto error;
+        closesocket(connfd);
+        return socket_errno_negative();
     }
     return connfd;
-error:
-    closesocket(connfd);
-    return socket_errno() > 0 ? -socket_errno() : -1;
 }
 
-int ConnectNonblock(const char* host, int port) {
-    return Connect(host, port, 1);
+static int ListenFD(int sockfd) {
+    if (sockfd < 0) return sockfd;
+    if (listen(sockfd, SOMAXCONN) < 0) {
+        perror("listen");
+        closesocket(sockfd);
+        return socket_errno_negative();
+    }
+    return sockfd;
 }
 
-int ConnectTimeout(const char* host, int port, int ms) {
-    int connfd = Connect(host, port, 1);
-    if (connfd < 0) return connfd;
+static int ConnectFDTimeout(int connfd, int ms) {
     int err;
     socklen_t optlen = sizeof(err);
-    struct timeval tv = {ms/1000, (ms%1000)*1000};
+    struct timeval tv = { ms / 1000, (ms % 1000) * 1000 };
     fd_set writefds;
     FD_ZERO(&writefds);
     FD_SET(connfd, &writefds);
@@ -169,8 +142,84 @@ int ConnectTimeout(const char* host, int port, int ms) {
     return connfd;
 error:
     closesocket(connfd);
-    return socket_errno() > 0 ? -socket_errno() : -1;
+    return socket_errno_negative();
 }
+
+int Bind(int port, const char* host, int type) {
+#ifdef OS_WIN
+    static int s_wsa_initialized = 0;
+    if (s_wsa_initialized == 0) {
+        s_wsa_initialized = 1;
+        WSADATA wsadata;
+        WSAStartup(MAKEWORD(2,2), &wsadata);
+    }
+#endif
+    sockaddr_u localaddr;
+    memset(&localaddr, 0, sizeof(localaddr));
+    int ret = sockaddr_set_ipport(&localaddr, host, port);
+    if (ret != 0) {
+        return NABS(ret);
+    }
+    return sockaddr_bind(&localaddr, type);
+}
+
+int Listen(int port, const char* host) {
+    int sockfd = Bind(port, host, SOCK_STREAM);
+    if (sockfd < 0) return sockfd;
+    return ListenFD(sockfd);
+}
+
+int Connect(const char* host, int port, int nonblock) {
+    sockaddr_u peeraddr;
+    memset(&peeraddr, 0, sizeof(peeraddr));
+    int ret = sockaddr_set_ipport(&peeraddr, host, port);
+    if (ret != 0) {
+        return NABS(ret);
+    }
+    return sockaddr_connect(&peeraddr, nonblock);
+}
+
+int ConnectNonblock(const char* host, int port) {
+    return Connect(host, port, 1);
+}
+
+int ConnectTimeout(const char* host, int port, int ms) {
+    int connfd = Connect(host, port, 1);
+    if (connfd < 0) return connfd;
+    return ConnectFDTimeout(connfd, ms);
+}
+
+#ifdef ENABLE_UDS
+int BindUnix(const char* path, int type) {
+    sockaddr_u localaddr;
+    memset(&localaddr, 0, sizeof(localaddr));
+    sockaddr_set_path(&localaddr, path);
+    return sockaddr_bind(&localaddr, type);
+}
+
+int ListenUnix(const char* path) {
+    int sockfd = BindUnix(path, SOCK_STREAM);
+    if (sockfd < 0) return sockfd;
+    return ListenFD(sockfd);
+}
+
+int ConnectUnix(const char* path, int nonblock) {
+    sockaddr_u peeraddr;
+    memset(&peeraddr, 0, sizeof(peeraddr));
+    sockaddr_set_path(&peeraddr, path);
+    return sockaddr_connect(&peeraddr, nonblock);
+}
+
+int ConnectUnixNonblock(const char* path) {
+    return ConnectUnix(path, 1);
+}
+
+int ConnectUnixTimeout(const char* path, int ms) {
+    int connfd = ConnectUnix(path, 1);
+    if (connfd < 0) return connfd;
+    return ConnectFDTimeout(connfd, ms);
+}
+#endif
 
 int Socketpair(int family, int type, int protocol, int sv[2]) {
 #ifdef OS_UNIX

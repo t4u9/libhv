@@ -11,10 +11,11 @@
  */
 
 #include <assert.h> // for assert
+#include <stddef.h> // for NULL
 #include <stdlib.h> // for malloc,realloc,free
 #include <string.h> // for memset,memmove
 
-#include "hbase.h"
+#include "hbase.h"  // for HV_ALLOC, HV_FREE
 
 #define ARRAY_INIT_SIZE     16
 
@@ -63,7 +64,7 @@ static inline type* atype##_back(atype* p) {\
 static inline void atype##_init(atype* p, int maxsize) {\
     p->size = 0;\
     p->maxsize = maxsize;\
-    SAFE_ALLOC(p->ptr, sizeof(type) * maxsize);\
+    HV_ALLOC(p->ptr, sizeof(type) * maxsize);\
 }\
 \
 static inline void atype##_clear(atype* p) {\
@@ -72,7 +73,7 @@ static inline void atype##_clear(atype* p) {\
 }\
 \
 static inline void atype##_cleanup(atype* p) {\
-    SAFE_FREE(p->ptr);\
+    HV_FREE(p->ptr);\
     p->size = p->maxsize = 0;\
 }\
 \

@@ -1,6 +1,7 @@
 #include "hstring.h"
 
 int main(int argc, char** argv) {
+    /*
     char str1[] = "a1B2*C3d4==";
     char str2[] = "a1B2*C3d4==";
     printf("strupper %s\n", strupper(str1));
@@ -13,6 +14,7 @@ int main(int argc, char** argv) {
         (int)strstartswith(str4, "123"),
         (int)strendswith(str4, "789"),
         (int)strcontains(str4, "456"));
+    */
 
     std::string str5 = asprintf("%s%d", "hello", 5);
     printf("asprintf %s\n", str5.c_str());
@@ -25,7 +27,7 @@ int main(int argc, char** argv) {
     }
 
     std::string str7("user=admin&pswd=123456");
-    KeyValue kv = splitKV(str7, '&', '=');
+    hv::KeyValue kv = splitKV(str7, '&', '=');
     for (auto& pair : kv) {
         printf("%s=%s\n", pair.first.c_str(), pair.second.c_str());
     }

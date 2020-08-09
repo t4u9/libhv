@@ -1,10 +1,15 @@
-#ifndef H_SYS_INFO_H_
-#define H_SYS_INFO_H_
+#ifndef HV_SYS_INFO_H_
+#define HV_SYS_INFO_H_
 
 #include "hplatform.h"
 
 #ifdef OS_LINUX
 #include <sys/sysinfo.h>
+#endif
+
+#ifdef OS_DARWIN
+#include <mach/mach_host.h>
+#include <sys/sysctl.h>
 #endif
 
 static inline int get_ncpu() {
@@ -21,8 +26,8 @@ static inline int get_ncpu() {
 }
 
 typedef struct meminfo_s {
-    unsigned long total; // KB
-    unsigned long free; // KB
+    unsigned long total;    // KB
+    unsigned long free;     // KB
 } meminfo_t;
 
 static inline int get_meminfo(meminfo_t* mem) {
@@ -42,9 +47,22 @@ static inline int get_meminfo(meminfo_t* mem) {
     mem->total = info.totalram * info.mem_unit >> 10;
     mem->free = info.freeram * info.mem_unit >> 10;
     return 0;
+#elif defined(OS_DARWIN)
+    uint64_t memsize = 0;
+    size_t size = sizeof(memsize);
+    int which[2] = {CTL_HW, HW_MEMSIZE};
+    sysctl(which, 2, &memsize, &size, NULL, 0);
+    mem->total = memsize >> 10;
+
+    vm_statistics_data_t info;
+    mach_msg_type_number_t count = sizeof(info) / sizeof(integer_t);
+    host_statistics(mach_host_self(), HOST_VM_INFO, (host_info_t)&info, &count);
+    mem->free = ((uint64_t)info.free_count * sysconf(_SC_PAGESIZE)) >> 10;
+    return 0;
 #else
+    (void)(mem);
     return -10;
 #endif
 }
 
-#endif // H_SYS_INFO_H_
+#endif // HV_SYS_INFO_H_

@@ -1,12 +1,16 @@
 #ifndef HV_CONFIG_H_
 #define HV_CONFIG_H_
 
+#ifndef HAVE_STDBOOL_H
+#define HAVE_STDBOOL_H 1
+#endif
+
 #ifndef HAVE_STDINT_H
 #define HAVE_STDINT_H 1
 #endif
 
-#ifndef HAVE_STDBOOL_H
-#define HAVE_STDBOOL_H 1
+#ifndef HAVE_STDATOMIC_H
+#define HAVE_STDATOMIC_H 1
 #endif
 
 #ifndef HAVE_SYS_TYPES_H
@@ -34,11 +38,11 @@
 #endif
 
 #ifndef HAVE_STRLCPY
-#define HAVE_STRLCPY 0
+#define HAVE_STRLCPY 1
 #endif
 
 #ifndef HAVE_STRLCAT
-#define HAVE_STRLCAT 0
+#define HAVE_STRLCAT 1
 #endif
 
 #ifndef HAVE_CLOCK_GETTIME
@@ -55,6 +59,10 @@
 
 #ifndef HAVE_PTHREAD_MUTEX_TIMEDLOCK
 #define HAVE_PTHREAD_MUTEX_TIMEDLOCK 0
+#endif
+
+#ifndef HAVE_SEM_TIMEDWAIT
+#define HAVE_SEM_TIMEDWAIT 0
 #endif
 
 #endif // HV_CONFIG_H_
