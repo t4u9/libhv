@@ -34,7 +34,7 @@
 #elif defined(sun) || defined(__sun) || defined(__sun__)
     #define OS_SOLARIS
 #else
-    #error "Unsupported operating system platform!"
+    #warning "Untested operating system platform!"
 #endif
 
 #if defined(OS_WIN32) || defined(OS_WIN64)
@@ -45,19 +45,22 @@
 #endif
 
 // ARCH
-#if defined(__i386) || defined(__i386__) || defined(_M_IX86)
-    #define ARCH_X86
-    #define ARCH_X86_32
-#elif defined(__x86_64) || defined(__x86_64__) || defined(__amd64) || defined(_M_X64)
+#if defined(__x86_64) || defined(__x86_64__) || defined(__amd64) || defined(_M_X64)
     #define ARCH_X64
     #define ARCH_X86_64
-#elif defined(__arm__)
-    #define ARCH_ARM
-#elif defined(__aarch64__) || defined(__ARM64__)
+#elif defined(__i386) || defined(__i386__) || defined(_M_IX86)
+    #define ARCH_X86
+    #define ARCH_X86_32
+#elif defined(__aarch64__) || defined(__ARM64__) || defined(_M_ARM64)
     #define ARCH_ARM64
+#elif defined(__arm__) || defined(_M_ARM)
+    #define ARCH_ARM
+#elif defined(__mips64__)
+    #define ARCH_MIPS64
+#elif defined(__mips__)
+    #define ARCH_MIPS
 #else
-    #define ARCH_UNKNOWN
-    #warning "Unknown hardware architecture!"
+    #warning "Untested hardware architecture!"
 #endif
 
 // COMPILER
@@ -108,12 +111,11 @@
 
 #pragma warning (disable: 4018) // signed/unsigned comparison
 #pragma warning (disable: 4100) // unused param
-#pragma warning (disable: 4251) // STL dll
+#pragma warning (disable: 4102) // unreferenced label
+#pragma warning (disable: 4244) // conversion loss of data
+#pragma warning (disable: 4267) // size_t => int
 #pragma warning (disable: 4819) // Unicode
 #pragma warning (disable: 4996) // _CRT_SECURE_NO_WARNINGS
-
-#elif defined(__MINGW32__) || defined(__MINGW64__)
-#define COMPILER_MINGW
 
 #elif defined(__GNUC__)
 #define COMPILER_GCC
@@ -125,6 +127,15 @@
 #elif defined(__clang__)
 #define COMPILER_CLANG
 
+#elif defined(__MINGW32__) || defined(__MINGW64__)
+#define COMPILER_MINGW
+
+#elif defined(__MSYS__)
+#define COMPILER_MSYS
+
+#elif defined(__CYGWIN__)
+#define COMPILER_CYGWIN
+
 #else
 #warning "Untested compiler!"
 #endif
@@ -134,9 +145,15 @@
     #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
     #endif
+    #ifndef _CRT_NONSTDC_NO_DEPRECATE
     #define _CRT_NONSTDC_NO_DEPRECATE
+    #endif
+    #ifndef _CRT_SECURE_NO_WARNINGS
     #define _CRT_SECURE_NO_WARNINGS
+    #endif
+    #ifndef _WINSOCK_DEPRECATED_NO_WARNINGS
     #define _WINSOCK_DEPRECATED_NO_WARNINGS
+    #endif
     #include <winsock2.h>
     #include <ws2tcpip.h>   // for inet_pton,inet_ntop
     #include <windows.h>
@@ -144,9 +161,27 @@
     #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
     #include <io.h>         // for open,close,read,write,lseek,tell
 
-    #define hv_delay(ms)    Sleep(ms)
+    #define hv_sleep(s)     Sleep((s) * 1000)
+    #define hv_msleep(ms)   Sleep(ms)
+    #define hv_usleep(us)   Sleep((us) / 1000)
+    #define hv_delay(ms)    hv_msleep(ms)
     #define hv_mkdir(dir)   mkdir(dir)
 
+    // access
+    #ifndef F_OK
+    #define F_OK            0       /* test for existence of file */
+    #endif
+    #ifndef X_OK
+    #define X_OK            (1<<0)  /* test for execute or search permission */
+    #endif
+    #ifndef W_OK
+    #define W_OK            (1<<1)  /* test for write permission */
+    #endif
+    #ifndef R_OK
+    #define R_OK            (1<<2)  /* test for read permission */
+    #endif
+
+    // stat
     #ifndef S_ISREG
     #define S_ISREG(st_mode) (((st_mode) & S_IFMT) == S_IFREG)
     #endif
@@ -166,7 +201,10 @@
     #include <netinet/udp.h>
     #include <netdb.h>  // for gethostbyname
 
-    #define hv_delay(ms)    usleep((ms)*1000)
+    #define hv_sleep(s)     sleep(s)
+    #define hv_msleep(ms)   usleep((ms) * 1000)
+    #define hv_usleep(us)   usleep(us)
+    #define hv_delay(ms)    hv_msleep(ms)
     #define hv_mkdir(dir)   mkdir(dir, 0777)
 #endif
 
@@ -199,10 +237,21 @@
 
 // BYTE_ORDER
 #ifndef BYTE_ORDER
-#if defined(ARCH_X86) || defined(ARCH_X86_64) || defined(__ARMEL__)
-#define BYTE_ORDER      LITTLE_ENDIAN
-#elif defined(__ARMEB__)
-#define BYTE_ORDER      BIG_ENDIAN
+#if defined(__BYTE_ORDER)
+    #define BYTE_ORDER  __BYTE_ORDER
+#elif defined(__BYTE_ORDER__)
+    #define BYTE_ORDER  __BYTE_ORDER__
+#elif defined(ARCH_X86)  || defined(ARCH_X86_64)   || \
+      defined(__ARMEL__) || defined(__AARCH64EL__) || \
+      defined(__MIPSEL)  || defined(__MIPS64EL)
+    #define BYTE_ORDER  LITTLE_ENDIAN
+#elif defined(__ARMEB__) || defined(__AARCH64EB__) || \
+      defined(__MIPSEB)  || defined(__MIPS64EB)
+    #define BYTE_ORDER  BIG_ENDIAN
+#elif defined(OS_WIN)
+    #define BYTE_ORDER  LITTLE_ENDIAN
+#else
+    #warning "Unknown byte order!"
 #endif
 #endif
 
@@ -230,7 +279,7 @@
     #endif
 
     #ifndef true
-    #define ture 1
+    #define true 1
     #endif
 
     #ifndef false
@@ -254,17 +303,6 @@ typedef unsigned __int64    uint64_t;
 
 typedef float               float32_t;
 typedef double              float64_t;
-
-// sizeof(var) = 8
-typedef union {
-    bool        b;
-    char        ch;
-    char*       str;
-    long long   num;
-    float       f;
-    double      lf;
-    void*       ptr;
-} var;
 
 typedef int (*method_t)(void* userdata);
 typedef void (*procedure_t)(void* userdata);

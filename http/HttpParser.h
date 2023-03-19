@@ -1,5 +1,5 @@
-#ifndef HTTP_PARSER_H_
-#define HTTP_PARSER_H_
+#ifndef HV_HTTP_PARSER_H_
+#define HV_HTTP_PARSER_H_
 
 #include "hexport.h"
 #include "HttpMessage.h"
@@ -20,16 +20,16 @@ public:
     virtual int GetState() = 0;
 
     // Http1Parser: GetState() != HP_MESSAGE_COMPLETE
-    // Http2Parser: GetState() == HSS_WANT_RECV
+    // Http2Parser: GetState() == H2_WANT_RECV
     virtual bool WantRecv() = 0;
 
     // Http1Parser: GetState() == HP_MESSAGE_COMPLETE
-    // Http2Parser: GetState() == HSS_WANT_SEND
+    // Http2Parser: GetState() == H2_WANT_SEND
     virtual bool WantSend() = 0;
 
     // IsComplete: Is recved HttpRequest or HttpResponse complete?
     // Http1Parser: GetState() == HP_MESSAGE_COMPLETE
-    // Http2Parser: (state == HSS_RECV_HEADERS || state == HSS_RECV_DATA) && stream_closed
+    // Http2Parser: (state == H2_RECV_HEADERS || state == H2_RECV_DATA) && stream_closed
     virtual bool IsComplete() = 0;
 
     // client
@@ -46,4 +46,6 @@ public:
     virtual const char* StrError(int error) = 0;
 };
 
-#endif // HTTP_PARSER_H_
+typedef std::shared_ptr<HttpParser> HttpParserPtr;
+
+#endif // HV_HTTP_PARSER_H_

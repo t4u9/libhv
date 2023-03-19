@@ -9,7 +9,7 @@ static const uint8_t s_days[] = \
 //   1       3       5       7   8       10      12
     {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-unsigned int gettick() {
+unsigned int gettick_ms() {
 #ifdef OS_WIN
     return GetTickCount();
 #elif HAVE_CLOCK_GETTIME
@@ -51,32 +51,36 @@ unsigned long long gethrtime_us() {
 }
 
 datetime_t datetime_now() {
-    datetime_t  dt;
 #ifdef OS_WIN
     SYSTEMTIME tm;
     GetLocalTime(&tm);
-    dt.year     = tm.wYear;
-    dt.month    = tm.wMonth;
-    dt.day      = tm.wDay;
-    dt.hour     = tm.wHour;
-    dt.min      = tm.wMinute;
-    dt.sec      = tm.wSecond;
-    dt.ms       = tm.wMilliseconds;
+    datetime_t dt;
+    dt.year  = tm.wYear;
+    dt.month = tm.wMonth;
+    dt.day   = tm.wDay;
+    dt.hour  = tm.wHour;
+    dt.min   = tm.wMinute;
+    dt.sec   = tm.wSecond;
+    dt.ms    = tm.wMilliseconds;
+    return dt;
 #else
     struct timeval tv;
-    struct tm* tm = NULL;
     gettimeofday(&tv, NULL);
-    time_t tt = tv.tv_sec;
-    tm = localtime(&tt);
-
-    dt.year     = tm->tm_year + 1900;
-    dt.month    = tm->tm_mon  + 1;
-    dt.day      = tm->tm_mday;
-    dt.hour     = tm->tm_hour;
-    dt.min      = tm->tm_min;
-    dt.sec      = tm->tm_sec;
-    dt.ms       = tv.tv_usec/1000;
+    datetime_t dt = datetime_localtime(tv.tv_sec);
+    dt.ms = tv.tv_usec / 1000;
+    return dt;
 #endif
+}
+
+datetime_t datetime_localtime(time_t seconds) {
+    struct tm* tm = localtime(&seconds);
+    datetime_t dt;
+    dt.year  = tm->tm_year + 1900;
+    dt.month = tm->tm_mon  + 1;
+    dt.day   = tm->tm_mday;
+    dt.hour  = tm->tm_hour;
+    dt.min   = tm->tm_min;
+    dt.sec   = tm->tm_sec;
     return dt;
 }
 
@@ -86,12 +90,12 @@ time_t datetime_mktime(datetime_t* dt) {
     time(&ts);
     struct tm* ptm = localtime(&ts);
     memcpy(&tm, ptm, sizeof(struct tm));
-    tm.tm_yday  = dt->year   - 1900;
-    tm.tm_mon   = dt->month  - 1;
-    tm.tm_mday  = dt->day;
-    tm.tm_hour  = dt->hour;
-    tm.tm_min   = dt->min;
-    tm.tm_sec   = dt->sec;
+    tm.tm_year = dt->year  - 1900;
+    tm.tm_mon  = dt->month - 1;
+    tm.tm_mday = dt->day;
+    tm.tm_hour = dt->hour;
+    tm.tm_min  = dt->min;
+    tm.tm_sec  = dt->sec;
     return mktime(&tm);
 }
 
@@ -154,7 +158,15 @@ char* duration_fmt(int sec, char* buf) {
 char* datetime_fmt(datetime_t* dt, char* buf) {
     sprintf(buf, DATETIME_FMT,
         dt->year, dt->month, dt->day,
-        dt->hour, dt->min, dt->sec, dt->ms);
+        dt->hour, dt->min, dt->sec);
+    return buf;
+}
+
+char* datetime_fmt_iso(datetime_t* dt, char* buf) {
+    sprintf(buf, DATETIME_FMT_ISO,
+        dt->year, dt->month, dt->day,
+        dt->hour, dt->min, dt->sec,
+        dt->ms);
     return buf;
 }
 
@@ -199,20 +211,20 @@ datetime_t hv_compile_datetime() {
     datetime_t dt;
     char month[32];
     sscanf(__DATE__, "%s %d %d", month, &dt.day, &dt.year);
-    sscanf(__TIME__, "%d %d %d", &dt.hour, &dt.min, &dt.sec);
+    sscanf(__TIME__, "%d:%d:%d", &dt.hour, &dt.min, &dt.sec);
     dt.month = month_atoi(month);
     return dt;
 }
 
 time_t cron_next_timeout(int minute, int hour, int day, int week, int month) {
     enum {
-        UNKOWN,
+        MINUTELY,
         HOURLY,
         DAILY,
         WEEKLY,
         MONTHLY,
         YEARLY,
-    } period_type = UNKOWN;
+    } period_type = MINUTELY;
     struct tm tm;
     time_t tt;
     time(&tt);
@@ -240,19 +252,18 @@ time_t cron_next_timeout(int minute, int hour, int day, int week, int month) {
         }
     }
 
-    if (period_type == UNKOWN) {
-        return -1;
-    }
-
     tt_round = mktime(&tm);
     if (week >= 0) {
-        tt_round = tt + (week-tm.tm_wday)*SECONDS_PER_DAY;
+        tt_round += (week-tm.tm_wday)*SECONDS_PER_DAY;
     }
     if (tt_round > tt) {
         return tt_round;
     }
 
     switch(period_type) {
+    case MINUTELY:
+        tt_round += SECONDS_PER_MINUTE;
+        return tt_round;
     case HOURLY:
         tt_round += SECONDS_PER_HOUR;
         return tt_round;

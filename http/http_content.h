@@ -1,16 +1,22 @@
-#ifndef HTTP_CONTENT_H_
-#define HTTP_CONTENT_H_
+#ifndef HV_HTTP_CONTENT_H_
+#define HV_HTTP_CONTENT_H_
 
 #include "hexport.h"
 #include "hstring.h"
 
-// QueryParams
-typedef hv::KeyValue    QueryParams;
-HV_EXPORT std::string dump_query_params(QueryParams& query_params);
-HV_EXPORT int         parse_query_params(const char* query_string, QueryParams& query_params);
-
 // NOTE: WITHOUT_HTTP_CONTENT
 // ndk-r10e no std::to_string and can't compile modern json.hpp
+#ifndef WITHOUT_HTTP_CONTENT
+#include "json.hpp" // https://github.com/nlohmann/json
+#endif
+
+BEGIN_NAMESPACE_HV
+
+// QueryParams
+using QueryParams = hv::KeyValue;
+HV_EXPORT std::string dump_query_params(const QueryParams& query_params);
+HV_EXPORT int         parse_query_params(const char* query_string, QueryParams& query_params);
+
 #ifndef WITHOUT_HTTP_CONTENT
 
 /**************multipart/form-data*************************************
@@ -43,22 +49,30 @@ struct FormData {
         content = hv::to_string(num);
     }
 };
+// FormFile
+struct FormFile : public FormData {
+    FormFile(const char* filename = NULL) {
+        if (filename) {
+            this->filename = filename;
+        }
+    }
+};
 
 // MultiPart
 // name => FormData
 typedef HV_MAP<std::string, FormData>          MultiPart;
 #define DEFAULT_MULTIPART_BOUNDARY  "----WebKitFormBoundary7MA4YWxkTrZu0gW"
 HV_EXPORT std::string dump_multipart(MultiPart& mp, const char* boundary = DEFAULT_MULTIPART_BOUNDARY);
-HV_EXPORT int         parse_multipart(std::string& str, MultiPart& mp, const char* boundary);
+HV_EXPORT int         parse_multipart(const std::string& str, MultiPart& mp, const char* boundary);
 
 // Json
-// https://github.com/nlohmann/json
-#include "json.hpp"
 using Json = nlohmann::json;
 // using Json = nlohmann::ordered_json;
 
-HV_EXPORT std::string dump_json(Json& json);
-HV_EXPORT int         parse_json(const char* str, Json& json, std::string& errmsg);
+HV_EXPORT std::string dump_json(const hv::Json& json, int indent = -1);
+HV_EXPORT int         parse_json(const char* str, hv::Json& json, std::string& errmsg);
 #endif
 
-#endif // HTTP_CONTENT_H_
+END_NAMESPACE_HV
+
+#endif // HV_HTTP_CONTENT_H_

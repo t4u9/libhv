@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "icmp.h"
+#include "hplatform.h"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {

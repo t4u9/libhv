@@ -27,18 +27,15 @@
 
 #include "hlog.h"
 #include "hbuf.h"
-#include "hgui.h"
 
 // cpp
 #ifdef __cplusplus
 #include "hmap.h"       // <map>
 #include "hstring.h"    // <string>
-#include "hvar.h"
-#include "hobj.h"
 #include "hfile.h"
+#include "hpath.h"
 #include "hdir.h"
 #include "hurl.h"
-#include "hscope.h"
 #endif
 
 #endif  // HV_H_

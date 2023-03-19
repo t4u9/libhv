@@ -43,7 +43,7 @@ int iowatcher_add_event(hloop_t* loop, int fd, int events) {
     hio_t* io = loop->ios.ptr[fd];
 
     struct epoll_event ee;
-    ee.events = 0;
+    memset(&ee, 0, sizeof(ee));
     ee.data.fd = fd;
     // pre events
     if (io->events & HV_READ) {
@@ -76,7 +76,7 @@ int iowatcher_del_event(hloop_t* loop, int fd, int events) {
     hio_t* io = loop->ios.ptr[fd];
 
     struct epoll_event ee;
-    ee.events = 0;
+    memset(&ee, 0, sizeof(ee));
     ee.data.fd = fd;
     // pre events
     if (io->events & HV_READ) {
@@ -106,6 +106,9 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
     if (epoll_ctx->events.size == 0) return 0;
     int nepoll = epoll_wait(epoll_ctx->epfd, epoll_ctx->events.ptr, epoll_ctx->events.size, timeout);
     if (nepoll < 0) {
+        if (errno == EINTR) {
+            return 0;
+        }
         perror("epoll");
         return nepoll;
     }

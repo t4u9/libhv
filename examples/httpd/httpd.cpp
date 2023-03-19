@@ -1,14 +1,15 @@
 #include "hv.h"
+#include "hssl.h"
 #include "hmain.h"
 #include "iniparser.h"
 
 #include "HttpServer.h"
-#include "ssl_ctx.h"
+#include "hasync.h"     // import hv::async
 
 #include "router.h"
 
-http_server_t   g_http_server;
-HttpService     g_http_service;
+hv::HttpServer  g_http_server;
+hv::HttpService g_http_service;
 
 static void print_version();
 static void print_help();
@@ -31,7 +32,7 @@ static const char detail_options[] = R"(
   -h|--help                 Print this information
   -v|--version              Print version
   -c|--confile <confile>    Set configure file, default etc/{program}.conf
-  -t|--test                 Test Configure file and exit
+  -t|--test                 Test configure file and exit
   -s|--signal <signal>      Send <signal> to process,
                             <signal>=[start,stop,restart,status,reload]
   -d|--daemon               Daemonize
@@ -56,7 +57,7 @@ int parse_confile(const char* confile) {
     }
 
     // logfile
-    string str = ini.GetValue("logfile");
+    std::string str = ini.GetValue("logfile");
     if (!str.empty()) {
         strncpy(g_main_ctx.logfile, str.c_str(), sizeof(g_main_ctx.logfile));
     }
@@ -79,13 +80,17 @@ int parse_confile(const char* confile) {
     // log_fsync
     str = ini.GetValue("log_fsync");
     if (!str.empty()) {
-        logger_enable_fsync(hlog, getboolean(str.c_str()));
+        logger_enable_fsync(hlog, hv_getboolean(str.c_str()));
     }
     hlogi("%s version: %s", g_main_ctx.program_name, hv_compile_version());
     hlog_fsync();
 
     // worker_processes
     int worker_processes = 0;
+#ifdef DEBUG
+    // Disable multi-processes mode for debugging
+    worker_processes = 0;
+#else
     str = ini.GetValue("worker_processes");
     if (str.size() != 0) {
         if (strcmp(str.c_str(), "auto") == 0) {
@@ -96,12 +101,29 @@ int parse_confile(const char* confile) {
             worker_processes = atoi(str.c_str());
         }
     }
+#endif
     g_http_server.worker_processes = LIMIT(0, worker_processes, MAXNUM_WORKER_PROCESSES);
     // worker_threads
-    int worker_threads = ini.Get<int>("worker_threads");
-    g_http_server.worker_threads = LIMIT(0, worker_threads, 16);
+    int worker_threads = 0;
+    str = ini.GetValue("worker_threads");
+    if (str.size() != 0) {
+        if (strcmp(str.c_str(), "auto") == 0) {
+            worker_threads = get_ncpu();
+            hlogd("worker_threads=ncpu=%d", worker_threads);
+        }
+        else {
+            worker_threads = atoi(str.c_str());
+        }
+    }
+    g_http_server.worker_threads = LIMIT(0, worker_threads, 64);
 
-    // port
+    // worker_connections
+    str = ini.GetValue("worker_connections");
+    if (str.size() != 0) {
+        g_http_server.worker_connections = atoi(str.c_str());
+    }
+
+    // http_port
     int port = 0;
     const char* szPort = get_arg("p");
     if (szPort) {
@@ -111,12 +133,18 @@ int parse_confile(const char* confile) {
         port = ini.Get<int>("port");
     }
     if (port == 0) {
+        port = ini.Get<int>("http_port");
+    }
+    g_http_server.port = port;
+    // https_port
+    if (HV_WITH_SSL) {
+        g_http_server.https_port = ini.Get<int>("https_port");
+    }
+    if (g_http_server.port == 0 && g_http_server.https_port == 0) {
         printf("Please config listen port!\n");
         exit(-10);
     }
-    g_http_server.port = port;
 
-    // http server
     // base_url
     str = ini.GetValue("base_url");
     if (str.size() != 0) {
@@ -142,14 +170,31 @@ int parse_confile(const char* confile) {
     if (str.size() != 0) {
         g_http_service.index_of = str;
     }
+    // limit_rate
+    str = ini.GetValue("limit_rate");
+    if (str.size() != 0) {
+        g_http_service.limit_rate = atoi(str.c_str());
+    }
+    // cors
+    if (ini.Get<bool>("cors")) {
+        g_http_service.AllowCORS();
+    }
+    if (ini.Get<bool>("forward_proxy")) {
+        g_http_service.EnableForwardProxy();
+    }
     // ssl
-    str = ini.GetValue("ssl");
-    if (getboolean(str.c_str())) {
-        g_http_server.ssl = 1;
+    if (g_http_server.https_port > 0) {
         std::string crt_file = ini.GetValue("ssl_certificate");
         std::string key_file = ini.GetValue("ssl_privatekey");
         std::string ca_file = ini.GetValue("ssl_ca_certificate");
-        if (ssl_ctx_init(crt_file.c_str(), key_file.c_str(), ca_file.c_str()) != 0) {
+        hlogi("SSL backend is %s", hssl_backend());
+        hssl_ctx_opt_t param;
+        memset(&param, 0, sizeof(param));
+        param.crt_file = crt_file.c_str();
+        param.key_file = key_file.c_str();
+        param.ca_file = ca_file.c_str();
+        param.endpoint = HSSL_SERVER;
+        if (g_http_server.newSslCtx(&param) != 0) {
             hloge("SSL certificate verify failed!");
             exit(0);
         }
@@ -176,26 +221,6 @@ int main(int argc, char** argv) {
         print_help();
         exit(ret);
     }
-
-    /*
-    printf("---------------arg------------------------------\n");
-    printf("%s\n", g_main_ctx.cmdline);
-    for (auto& pair : g_main_ctx.arg_kv) {
-        printf("%s=%s\n", pair.first.c_str(), pair.second.c_str());
-    }
-    for (auto& item : g_main_ctx.arg_list) {
-        printf("%s\n", item.c_str());
-    }
-    printf("================================================\n");
-    */
-
-    /*
-    printf("---------------env------------------------------\n");
-    for (auto& pair : g_main_ctx.env_kv) {
-        printf("%s=%s\n", pair.first.c_str(), pair.second.c_str());
-    }
-    printf("================================================\n");
-    */
 
     // help
     if (get_arg("h")) {
@@ -246,7 +271,22 @@ int main(int argc, char** argv) {
 
     // http_server
     Router::Register(g_http_service);
-    g_http_server.service = &g_http_service;
-    ret = http_server_run(&g_http_server);
+    g_http_server.registerHttpService(&g_http_service);
+
+#if 0
+    std::atomic_flag init_flag = ATOMIC_FLAG_INIT;
+    g_http_server.onWorkerStart = [&init_flag](){
+        if (!init_flag.test_and_set()) {
+            hv::async::startup();
+        }
+    };
+    g_http_server.onWorkerStop = [&init_flag](){
+        if (init_flag.test_and_set()) {
+            hv::async::cleanup();
+        }
+    };
+#endif
+
+    g_http_server.run();
     return ret;
 }

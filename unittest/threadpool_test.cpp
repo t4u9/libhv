@@ -6,11 +6,11 @@
 
 void print_task(int i) {
     printf("thread[%ld]: task[%d]\n", hv_gettid(), i);
-    sleep(1);
+    hv_sleep(1);
 }
 
 int main(int argc, char** argv) {
-    HThreadPool tp(4);
+    HThreadPool tp(1, 4);
     tp.start();
 
     int i = 0;

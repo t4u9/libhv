@@ -1,3 +1,11 @@
+/*
+ * @build: make examples
+ * @usage: bin/hloop_test
+ *         bin/nc 127.0.0.1 10514
+ *         nc     127.0.0.1 10514
+ *
+ */
+
 #include "hloop.h"
 #include "hbase.h"
 #include "hlog.h"
@@ -27,10 +35,14 @@ void on_timer(htimer_t* timer) {
         LLU(hloop_now(loop)), LLU(hloop_now_hrtime(loop)));
 }
 
+void cron_minutely(htimer_t* timer) {
+    time_t now = time(NULL);
+    printf("cron_minutely: %s\n", ctime(&now));
+}
+
 void cron_hourly(htimer_t* timer) {
-    time_t tt;
-    time(&tt);
-    printf("cron_hourly: %s\n", ctime(&tt));
+    time_t now = time(NULL);
+    printf("cron_hourly: %s\n", ctime(&now));
 }
 
 void timer_write_log(htimer_t* timer) {
@@ -49,7 +61,7 @@ void on_stdin(hio_t* io, void* buf, int readbytes) {
 }
 
 void on_custom_events(hevent_t* ev) {
-    printf("on_custom_events event_type=%d userdata=%ld\n", (int)ev->event_type, (long)ev->userdata);
+    printf("on_custom_events event_type=%d userdata=%ld\n", (int)ev->event_type, (long)(intptr_t)ev->userdata);
 }
 
 int main() {
@@ -72,12 +84,14 @@ int main() {
 
     // test timer period
     int minute = time(NULL)%3600/60;
+    htimer_add_period(loop, cron_minutely, -1, -1, -1, -1, -1, INFINITE);
     htimer_add_period(loop, cron_hourly, minute+1, -1, -1, -1, -1, INFINITE);
 
     // test network_logger
     htimer_add(loop, timer_write_log, 1000, INFINITE);
-    logger_set_handler(hlog, mylogger);
+    hlog_set_handler(mylogger);
     hlog_set_file("loop.log");
+    hlog_set_format(DEFAULT_LOG_FORMAT);
 #ifndef _MSC_VER
     logger_enable_color(hlog, 1);
 #endif
@@ -91,9 +105,10 @@ int main() {
     // test custom_events
     for (int i = 0; i < 10; ++i) {
         hevent_t ev;
+        memset(&ev, 0, sizeof(ev));
         ev.event_type = (hevent_type_e)(HEVENT_TYPE_CUSTOM + i);
         ev.cb = on_custom_events;
-        ev.userdata = (void*)(long)i;
+        ev.userdata = (void*)(intptr_t)i;
         hloop_post_event(loop, &ev);
     }
 

@@ -1,4 +1,14 @@
+/*
+ * @build: make examples
+ * @server bin/httpd -s restart -d
+ * @usage: bin/curl -v www.baidu.com
+ *         bin/curl -v 127.0.0.1:8080
+ *         bin/curl -v 127.0.0.1:8080/ping
+ *         bin/curl -v 127.0.0.1:8080/echo -d 'hello,world!'
+ */
+
 #include "http_client.h"
+#include "hurl.h"
 
 #ifdef _MSC_VER
 #include "misc/win32_getopt.h"
@@ -6,28 +16,42 @@
 #include <getopt.h>
 #endif
 
-static int  http_version = 1;
-static int  grpc         = 0;
-static bool verbose = false;
-static const char* url = NULL;
-static const char* method = NULL;
-static const char* headers = NULL;
-static const char* data = NULL;
-static const char* form = NULL;
-static int  send_count   = 1;
+static bool verbose         = false;
+static const char* method   = NULL;
+static const char* url      = "/";
+static int  http_version    = 1;
+static int  grpc            = 0;
+static int  send_count      = 1;
+static int  retry_count     = 0;
+static int  retry_delay     = 3;
+static int  timeout         = 0;
 
-static const char* options = "hVvX:H:d:F:n:";
+static int lopt = 0;
+static const char* http_proxy   = NULL;
+static const char* https_proxy  = NULL;
+static const char* no_proxy     = NULL;
+
+static const char* options = "hVvX:H:r:d:F:n:";
 static const struct option long_options[] = {
     {"help",    no_argument,        NULL,   'h'},
     {"verion",  no_argument,        NULL,   'V'},
     {"verbose", no_argument,        NULL,   'v'},
     {"method",  required_argument,  NULL,   'X'},
     {"header",  required_argument,  NULL,   'H'},
+    {"range",   required_argument,  NULL,   'r'},
     {"data",    required_argument,  NULL,   'd'},
     {"form",    required_argument,  NULL,   'F'},
+    {"count",   required_argument,  NULL,   'n'},
     {"http2",   no_argument,        &http_version, 2},
     {"grpc",    no_argument,        &grpc,  1},
-    {"count",   required_argument,  NULL,   'n'},
+    \
+    {"http-proxy",  required_argument,  &lopt,  1},
+    {"https-proxy", required_argument,  &lopt,  2},
+    {"no-proxy",    required_argument,  &lopt,  3},
+    {"retry",       required_argument,  &lopt,  4},
+    {"delay",       required_argument,  &lopt,  5},
+    {"timeout",     required_argument,  &lopt,  6},
+    \
     {NULL,      0,                  NULL,   0}
 };
 static const char* help = R"(Options:
@@ -35,57 +59,187 @@ static const char* help = R"(Options:
     -V|--version        Print version.
     -v|--verbose        Show verbose infomation.
     -X|--method         Set http method.
-    -H|--header         Add http headers, -H "Content-Type:application/json Accept:*/*"
+    -H|--header         Add http header, -H "Content-Type: application/json"
+    -r|--range          Add http header Range:bytes=0-1023
     -d|--data           Set http body.
-    -F|--form           Set http form, -F "name1=content;name2=@filename"
+    -F|--form           Set http form, -F "name=value" -F "file=@filename"
     -n|--count          Send request count, used for test keep-alive
        --http2          Use http2
        --grpc           Use grpc over http2
+       --http-proxy     Set http proxy
+       --https-proxy    Set https proxy
+       --no-proxy       Set no proxy
+       --retry          Set fail retry count
+       --timeout        Set timeout, unit(s)
+
 Examples:
+    curl -v GET  httpbin.org/get
+    curl -v POST httpbin.org/post   user=admin pswd=123456
+    curl -v PUT  httpbin.org/put    user=admin pswd=123456
     curl -v localhost:8080
-    curl -v localhost:8080/v1/api/hello
-    curl -v localhost:8080/v1/api/query?page_no=1&page_size=10
-    curl -v localhost:8080/v1/api/echo  -d 'hello,world!'
-    curl -v localhost:8080/v1/api/kv    -H "Content-Type:application/x-www-form-urlencoded" -d 'user=admin&pswd=123456'
-    curl -v localhost:8080/v1/api/json  -H "Content-Type:application/json"                  -d '{"user":"admin","pswd":"123456"}'
-    curl -v localhost:8080/v1/api/form  -F 'file=@filename'
+    curl -v localhost:8080 -r 0-9
+    curl -v localhost:8080/ping
+    curl -v localhost:8080/query?page_no=1\&page_size=10
+    curl -v localhost:8080/echo     hello,world!
+    curl -v localhost:8080/kv       user=admin\&pswd=123456
+    curl -v localhost:8080/json     user=admin pswd=123456
+    curl -v localhost:8080/form     -F file=@filename
+    curl -v localhost:8080/upload   @filename
 )";
 
-void print_usage() {
-    printf("Usage: curl [%s] url\n", options);
+static void print_usage() {
+    fprintf(stderr, "Usage: curl [%s] [METHOD] url [header_field:header_value] [body_key=body_value]\n", options);
 }
-void print_version() {
-    printf("curl version 1.0.0\n");
+static void print_version() {
+    fprintf(stderr, "curl version 1.0.0\n");
 }
-void print_help() {
+static void print_help() {
     print_usage();
     puts(help);
     print_version();
 }
 
-int parse_cmdline(int argc, char* argv[]) {
+static bool is_upper_string(const char* str) {
+    const char* p = str;
+    while (*p >= 'A' && *p <= 'Z') ++p;
+    return *p == '\0';
+}
+
+static int parse_data(char* arg, HttpRequest* req) {
+    char* pos = NULL;
+    // @filename
+    if (arg[0] == '@') {
+        req->File(arg + 1);
+        return 0;
+    }
+
+    // k1=v1&k2=v2
+    hv::KeyValue kvs = hv::splitKV(arg, '&', '=');
+    if (kvs.size() >= 2) {
+        if (req->ContentType() == CONTENT_TYPE_NONE) {
+            req->content_type = X_WWW_FORM_URLENCODED;
+        }
+        for (auto& kv : kvs) {
+            req->Set(kv.first.c_str(), kv.second);
+        }
+        return 0;
+    }
+
+    // k=v
+    if ((pos = strchr(arg, '=')) != NULL) {
+        *pos = '\0';
+        if (pos[1] == '@') {
+            // file=@filename
+            req->content_type = MULTIPART_FORM_DATA;
+            req->SetFormFile(optarg, pos + 2);
+        } else {
+            if (req->ContentType() == CONTENT_TYPE_NONE) {
+                req->content_type = APPLICATION_JSON;
+            }
+            req->Set(arg, pos + 1);
+        }
+        return 0;
+    }
+
+    if (req->ContentType() == CONTENT_TYPE_NONE) {
+        req->content_type = TEXT_PLAIN;
+    }
+    req->body = arg;
+    return 0;
+}
+
+static int parse_cmdline(int argc, char* argv[], HttpRequest* req) {
     int opt;
     int opt_idx;
+    char* pos = NULL;
     while ((opt = getopt_long(argc, argv, options, long_options, &opt_idx)) != EOF) {
         switch(opt) {
-        case 'h': print_help(); exit(0);
-        case 'V': print_version(); exit(0);
-        case 'v': verbose = true; break;
-        case 'X': method = optarg; break;
-        case 'H': headers = optarg; break;
-        case 'd': data = optarg; break;
-        case 'F': form = optarg; break;
+        case 'h': print_help();     exit(0);
+        case 'V': print_version();  exit(0);
+        case 'v': verbose = true;   break;
+        case 'X': method = optarg;  break;
+        case 'H':
+            // -H "Content-Type: application/json"
+            pos = strchr(optarg, ':');
+            if (pos) {
+                *pos = '\0';
+                req->headers[optarg] = hv::trim(pos + 1);
+                *pos = ':';
+            }
+            break;
+        case 'r':
+            req->headers["Range"] = std::string("bytes=").append(optarg);
+            break;
+        case 'd':
+            parse_data(optarg, req);
+            break;
+        case 'F':
+            pos = strchr(optarg, '=');
+            if (pos) {
+                req->content_type = MULTIPART_FORM_DATA;
+                *pos = '\0';
+                if (pos[1] == '@') {
+                    // -F file=@filename
+                    req->SetFormFile(optarg, pos + 2);
+                } else {
+                    // -F name=value
+                    req->SetFormData(optarg, pos + 1);
+                }
+                *pos = '=';
+            }
+            break;
         case 'n': send_count = atoi(optarg); break;
+        case  0 :
+        {
+            switch (lopt) {
+            case  1: http_proxy  = optarg;      break;
+            case  2: https_proxy = optarg;      break;
+            case  3: no_proxy    = optarg;      break;
+            case  4: retry_count = atoi(optarg);break;
+            case  5: retry_delay = atoi(optarg);break;
+            case  6: timeout     = atoi(optarg);break;
+            default: break;
+            }
+        }
         default: break;
         }
     }
 
     if (optind == argc) {
-        printf("Missing url\n");
+        fprintf(stderr, "Missing url\n");
         print_usage();
         exit(-1);
     }
-    url = argv[optind];
+
+    if (is_upper_string(argv[optind])) {
+        method = argv[optind++];
+    }
+    url = argv[optind++];
+
+    for (int d = optind; d < argc; ++d) {
+        char* arg = argv[d];
+        if ((pos = strchr(arg, ':')) != NULL) {
+            *pos = '\0';
+            req->headers[arg] = pos + 1;
+        } else {
+            parse_data(arg, req);
+        }
+    }
+
+    // --http2
+    if (http_version == 2) {
+        req->http_major = 2;
+        req->http_minor = 0;
+    }
+    // --grpc
+    if (grpc) {
+        http_version = 2;
+        req->content_type = APPLICATION_GRPC;
+    }
+    // --timeout
+    if (timeout > 0) {
+        req->timeout = timeout;
+    }
 
     return 0;
 }
@@ -96,135 +250,81 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    parse_cmdline(argc, argv);
-
     int ret = 0;
     HttpRequest req;
-    if (grpc) {
-        http_version = 2;
-        req.content_type = APPLICATION_GRPC;
-    }
-    if (http_version == 2) {
-        req.http_major = 2;
-        req.http_minor = 0;
-    }
-    req.url = url;
+    parse_cmdline(argc, argv, &req);
     if (method) {
         req.method = http_method_enum(method);
-    }
-    enum {
-        s_key,
-        s_value,
-    } state = s_key;
-    if (headers) {
-        const char* p = headers;
-        const char* key = p;
-        const char* value = NULL;
-        int key_len = 0;
-        int value_len = 0;
-        state = s_key;
-        while (*p != '\0') {
-            if (*p == ' ') {
-                if (key_len && value_len) {
-                    req.headers[std::string(key,key_len)] = std::string(value,value_len);
-                    key_len = value_len = 0;
-                }
-                state = s_key;
-                key = p+1;
-            }
-            else if (*p == ':') {
-                state = s_value;
-                value = p+1;
-            }
-            else {
-                state == s_key ? ++key_len : ++value_len;
-            }
-            ++p;
-        }
-        if (key_len && value_len) {
-            req.headers[std::string(key,key_len)] = std::string(value,value_len);
-            key_len = value_len = 0;
-        }
-    }
-    if (data || form) {
-        if (method == NULL) {
+    } else {
+        req.DumpBody();
+        if (req.body.empty()) {
+            req.method = HTTP_GET;
+        } else {
             req.method = HTTP_POST;
         }
-        if (data) {
-            req.body = data;
-        }
-        else if (form) {
-            const char* p = form;
-            const char* key = p;
-            const char* value = NULL;
-            int key_len = 0;
-            int value_len = 0;
-            state = s_key;
-            while (*p != '\0') {
-                if (*p == ' ') {
-                    if (key_len && value_len) {
-                        FormData data;
-                        if (*value == '@') {
-                            data.filename = std::string(value+1, value_len-1);
-                        }
-                        else {
-                            data.content = std::string(value, value_len);
-                        }
-                        req.form[std::string(key,key_len)] = data;
-                        key_len = value_len = 0;
-                    }
-                    state = s_key;
-                    key = p+1;
-                }
-                else if (*p == '=') {
-                    state = s_value;
-                    value = p+1;
-                }
-                else {
-                    state == s_key ? ++key_len : ++value_len;
-                }
-                ++p;
+    }
+    req.url = HUrl::escapeUrl(url);
+    req.http_cb = [](HttpMessage* res, http_parser_state state, const char* data, size_t size) {
+        if (state == HP_HEADERS_COMPLETE) {
+            if (verbose) {
+                fprintf(stderr, "%s", res->Dump(true, false).c_str());
             }
-            if (key_len && value_len) {
-                printf("key=%.*s value=%.*s\n", key_len, key, value_len, value);
-                FormData data;
-                if (*value == '@') {
-                    data.filename = std::string(value+1, value_len-1);
-                }
-                else {
-                    data.content = std::string(value, value_len);
-                }
-                req.form[std::string(key,key_len)] = data;
+        } else if (state == HP_BODY) {
+            if (data && size) {
+                printf("%.*s", (int)size, data);
+                // This program no need to save data to body.
+                // res->body.append(data, size);
             }
         }
+    };
+
+    hv::HttpClient cli;
+    // http_proxy
+    if (http_proxy) {
+        hv::StringList ss = hv::split(http_proxy, ':');
+        const char* host = ss[0].c_str();
+        int port = ss.size() == 2 ? hv::from_string<int>(ss[1]) : DEFAULT_HTTP_PORT;
+        fprintf(stderr, "* http_proxy=%s:%d\n", host, port);
+        cli.setHttpProxy(host, port);
+    }
+    // https_proxy
+    if (https_proxy) {
+        hv::StringList ss = hv::split(https_proxy, ':');
+        const char* host = ss[0].c_str();
+        int port = ss.size() == 2 ? hv::from_string<int>(ss[1]) : DEFAULT_HTTPS_PORT;
+        fprintf(stderr, "* https_proxy=%s:%d\n", host, port);
+        cli.setHttpsProxy(host, port);
+    }
+    // no_proxy
+    if (no_proxy) {
+        hv::StringList ss = hv::split(no_proxy, ',');
+        fprintf(stderr, "* no_proxy=");
+        for (const auto& s : ss) {
+            fprintf(stderr, "%s,", s.c_str());
+            cli.addNoProxy(s.c_str());
+        }
+        fprintf(stderr, "\n");
+    }
+
+send:
+    if (verbose) {
+        fprintf(stderr, "%s\n", req.Dump(true, true).c_str());
     }
     HttpResponse res;
-    http_client_t* hc = http_client_new();
-send:
-    ret = http_client_send(hc, &req, &res);
-    if (verbose) {
-        printf("%s\n", req.Dump(true,true).c_str());
-    }
+    ret = cli.send(&req, &res);
     if (ret != 0) {
-        printf("* Failed:%s:%d\n", http_client_strerror(ret), ret);
-    }
-    else {
-        if (verbose) {
-            printf("%s\n", res.Dump(true,true).c_str());
-        }
-        else {
-            printf("%s\n", res.body.c_str());
+        fprintf(stderr, "* Failed:%s:%d\n", http_client_strerror(ret), ret);
+        if (retry_count > 0) {
+            fprintf(stderr, "\nretry again later...%d\n", retry_count);
+            --retry_count;
+            hv_sleep(retry_delay);
+            goto send;
         }
     }
     if (--send_count > 0) {
-        printf("send again later...%d\n", send_count);
-#ifdef _WIN32
-        Sleep(3*1000);
-#else
-        sleep(3);
-#endif
+        fprintf(stderr, "\nsend again later...%d\n", send_count);
+        hv_sleep(retry_delay);
         goto send;
     }
-    http_client_del(hc);
     return ret;
 }

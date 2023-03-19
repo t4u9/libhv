@@ -14,6 +14,12 @@ BEGIN_EXTERN_C
 #define hmutex_lock             EnterCriticalSection
 #define hmutex_unlock           LeaveCriticalSection
 
+#define hrecursive_mutex_t          CRITICAL_SECTION
+#define hrecursive_mutex_init       InitializeCriticalSection
+#define hrecursive_mutex_destroy    DeleteCriticalSection
+#define hrecursive_mutex_lock       EnterCriticalSection
+#define hrecursive_mutex_unlock     LeaveCriticalSection
+
 #define HSPINLOCK_COUNT         -1
 #define hspinlock_t             CRITICAL_SECTION
 #define hspinlock_init(pspin)   InitializeCriticalSectionAndSpinCount(pspin, HSPINLOCK_COUNT)
@@ -75,6 +81,18 @@ static inline void honce(honce_t* once, honce_fn fn) {
 #define hmutex_lock             pthread_mutex_lock
 #define hmutex_unlock           pthread_mutex_unlock
 
+#define hrecursive_mutex_t          pthread_mutex_t
+#define hrecursive_mutex_init(pmutex) \
+    do {\
+        pthread_mutexattr_t attr;\
+        pthread_mutexattr_init(&attr);\
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);\
+        pthread_mutex_init(pmutex, &attr);\
+    } while(0)
+#define hrecursive_mutex_destroy    pthread_mutex_destroy
+#define hrecursive_mutex_lock       pthread_mutex_lock
+#define hrecursive_mutex_unlock     pthread_mutex_unlock
+
 #if HAVE_PTHREAD_SPIN_LOCK
 #define hspinlock_t             pthread_spinlock_t
 #define hspinlock_init(pspin)   pthread_spin_init(pspin, PTHREAD_PROCESS_PRIVATE)
@@ -102,28 +120,31 @@ static inline void honce(honce_t* once, honce_fn fn) {
 #define htimed_mutex_destroy        pthread_mutex_destroy
 #define htimed_mutex_lock           pthread_mutex_lock
 #define htimed_mutex_unlock         pthread_mutex_unlock
+static inline void timespec_after(struct timespec* ts, unsigned int ms) {
+    struct timeval  tv;
+    gettimeofday(&tv, NULL);
+    ts->tv_sec = tv.tv_sec + ms / 1000;
+    ts->tv_nsec = tv.tv_usec * 1000 + ms % 1000 * 1000000;
+    if (ts->tv_nsec >= 1000000000) {
+        ts->tv_nsec -= 1000000000;
+        ts->tv_sec += 1;
+    }
+}
 // true:  OK
 // false: ETIMEDOUT
 static inline int htimed_mutex_lock_for(htimed_mutex_t* mutex, unsigned int ms) {
 #if HAVE_PTHREAD_MUTEX_TIMEDLOCK
     struct timespec ts;
-    struct timeval  tv;
-    gettimeofday(&tv, NULL);
-    ts.tv_sec = tv.tv_sec + ms / 1000;
-    ts.tv_nsec = tv.tv_usec * 1000 + ms % 1000 * 1000000;
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_nsec -= 1000000000;
-        ts.tv_sec += 1;
-    }
+    timespec_after(&ts, ms);
     return pthread_mutex_timedlock(mutex, &ts) != ETIMEDOUT;
 #else
     int ret = 0;
-    unsigned int end = gettick() + ms;
+    unsigned int end = gettick_ms() + ms;
     while ((ret = pthread_mutex_trylock(mutex)) != 0) {
-        if (gettick() >= end) {
+        if (gettick_ms() >= end) {
             break;
         }
-        msleep(1);
+        hv_msleep(1);
     }
     return ret == 0;
 #endif
@@ -139,14 +160,7 @@ static inline int htimed_mutex_lock_for(htimed_mutex_t* mutex, unsigned int ms) 
 // false: ETIMEDOUT
 static inline int hcondvar_wait_for(hcondvar_t* cond, hmutex_t* mutex, unsigned int ms) {
     struct timespec ts;
-    struct timeval  tv;
-    gettimeofday(&tv, NULL);
-    ts.tv_sec = tv.tv_sec + ms / 1000;
-    ts.tv_nsec = tv.tv_usec * 1000 + ms % 1000 * 1000000;
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_nsec -= 1000000000;
-        ts.tv_sec += 1;
-    }
+    timespec_after(&ts, ms);
     return pthread_cond_timedwait(cond, mutex, &ts) != ETIMEDOUT;
 }
 
@@ -165,23 +179,16 @@ static inline int hcondvar_wait_for(hcondvar_t* cond, hmutex_t* mutex, unsigned 
 static inline int hsem_wait_for(hsem_t* sem, unsigned int ms) {
 #if HAVE_SEM_TIMEDWAIT
     struct timespec ts;
-    struct timeval  tv;
-    gettimeofday(&tv, NULL);
-    ts.tv_sec = tv.tv_sec + ms / 1000;
-    ts.tv_nsec = tv.tv_usec * 1000 + ms % 1000 * 1000000;
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_nsec -= 1000000000;
-        ts.tv_sec += 1;
-    }
+    timespec_after(&ts, ms);
     return sem_timedwait(sem, &ts) != ETIMEDOUT;
 #else
     int ret = 0;
-    unsigned int end = gettick() + ms;
+    unsigned int end = gettick_ms() + ms;
     while ((ret = sem_trywait(sem)) != 0) {
-        if (gettick() >= end) {
+        if (gettick_ms() >= end) {
             break;
         }
-        msleep(1);
+        hv_msleep(1);
     }
     return ret == 0;
 #endif
@@ -235,11 +242,26 @@ public:
 
     void wrlock()   { hrwlock_wrlock(&_rwlock); }
     void wrunlock() { hrwlock_wrunlock(&_rwlock); }
+
+    void lock()     { rdlock(); }
+    void unlock()   { rdunlock(); }
 protected:
     hrwlock_t   _rwlock;
 };
 
+template<class T>
+class LockGuard {
+public:
+    LockGuard(T& t) : _lock(t) { _lock.lock(); }
+    ~LockGuard() { _lock.unlock(); }
+protected:
+    T& _lock;
+};
+
 END_NAMESPACE_HV
+
+// same as java synchronized(lock) { ... }
+#define synchronized(lock) for (std::lock_guard<std::mutex> _lock_(lock), *p = &_lock_; p != NULL; p = NULL)
 
 #endif // __cplusplus
 

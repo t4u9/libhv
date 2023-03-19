@@ -27,7 +27,7 @@ int post_acceptex(hio_t* listenio, hoverlapped_t* hovlp) {
         HV_ALLOC(hovlp->buf.buf, hovlp->buf.len);
     }
     hovlp->fd = connfd;
-    hovlp->event = READ_EVENT;
+    hovlp->event = HV_READ;
     hovlp->io = listenio;
     if (AcceptEx(listenio->fd, connfd, hovlp->buf.buf, 0, sizeof(struct sockaddr_in6), sizeof(struct sockaddr_in6),
         &dwbytes, &hovlp->ovlp) != TRUE) {
@@ -45,11 +45,8 @@ int post_recv(hio_t* io, hoverlapped_t* hovlp) {
         HV_ALLOC_SIZEOF(hovlp);
     }
     hovlp->fd = io->fd;
-    hovlp->event = READ_EVENT;
+    hovlp->event = HV_READ;
     hovlp->io = io;
-    if (io->readbuf.base == NULL || io->readbuf.len == 0) {
-        hio_set_readbuf(io, io->loop->readbuf.base, io->loop->readbuf.len);
-    }
     hovlp->buf.len = io->readbuf.len;
     if (io->io_type == HIO_TYPE_UDP || io->io_type == HIO_TYPE_IP) {
         HV_ALLOC(hovlp->buf.buf, hovlp->buf.len);
@@ -216,7 +213,7 @@ end:
 }
 
 static void hio_handle_events(hio_t* io) {
-    if ((io->events & READ_EVENT) && (io->revents & READ_EVENT)) {
+    if ((io->events & HV_READ) && (io->revents & HV_READ)) {
         if (io->accept) {
             on_acceptex_complete(io);
         }
@@ -247,7 +244,8 @@ int hio_accept (hio_t* io) {
     for (int i = 0; i < ACCEPTEX_NUM; ++i) {
         post_acceptex(io, NULL);
     }
-    return hio_add(io, hio_handle_events, READ_EVENT);
+    io->accept = 1;
+    return hio_add(io, hio_handle_events, HV_READ);
 }
 
 int hio_connect (hio_t* io) {
@@ -286,6 +284,7 @@ int hio_connect (hio_t* io) {
             goto error;
         }
     }
+    io->connect = 1;
     return hio_add(io, hio_handle_events, HV_WRITE);
 error:
     hio_close(io);
@@ -294,7 +293,7 @@ error:
 
 int hio_read (hio_t* io) {
     post_recv(io, NULL);
-    return hio_add(io, hio_handle_events, READ_EVENT);
+    return hio_add(io, hio_handle_events, HV_READ);
 }
 
 int hio_write(hio_t* io, const void* buf, size_t len) {
@@ -377,28 +376,9 @@ disconnect:
 }
 
 int hio_close (hio_t* io) {
-    printd("close fd=%d\n", io->fd);
     if (io->closed) return 0;
     io->closed = 1;
-    hio_del(io, HV_RDWR);
-#ifdef USE_DISCONNECTEX
-    // DisconnectEx reuse socket
-    if (io->connectex) {
-        io->connectex = 0;
-        LPFN_DISCONNECTEX DisconnectEx = NULL;
-        GUID guidDisconnectEx = WSAID_DISCONNECTEX;
-        DWORD dwbytes;
-        if (WSAIoctl(io->fd, SIO_GET_EXTENSION_FUNCTION_POINTER,
-            &guidDisconnectEx, sizeof(guidDisconnectEx),
-            &DisconnectEx, sizeof(DisconnectEx),
-            &dwbytes, NULL, NULL) != 0) {
-            return;
-        }
-        DisconnectEx(io->fd, NULL, 0, 0);
-    }
-#else
-    closesocket(io->fd);
-#endif
+    hio_done(io);
     if (io->hovlp) {
         hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
         // NOTE: hread buf provided by caller
@@ -412,6 +392,26 @@ int hio_close (hio_t* io) {
         //printd("close_cb------\n");
         io->close_cb(io);
         //printd("close_cb======\n");
+    }
+    if (io->io_type & HIO_TYPE_SOCKET) {
+#ifdef USE_DISCONNECTEX
+        // DisconnectEx reuse socket
+        if (io->connectex) {
+            io->connectex = 0;
+            LPFN_DISCONNECTEX DisconnectEx = NULL;
+            GUID guidDisconnectEx = WSAID_DISCONNECTEX;
+            DWORD dwbytes;
+            if (WSAIoctl(io->fd, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                &guidDisconnectEx, sizeof(guidDisconnectEx),
+                &DisconnectEx, sizeof(DisconnectEx),
+                &dwbytes, NULL, NULL) != 0) {
+                return;
+            }
+            DisconnectEx(io->fd, NULL, 0, 0);
+        }
+#else
+        closesocket(io->fd);
+#endif
     }
     return 0;
 }

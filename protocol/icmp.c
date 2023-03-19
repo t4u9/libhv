@@ -8,6 +8,7 @@
 #define PING_TIMEOUT    1000 // ms
 int ping(const char* host, int cnt) {
     static uint16_t seq = 0;
+    uint16_t pid16 = (uint16_t)getpid();
     char ip[64] = {0};
     uint32_t start_tick, end_tick;
     uint64_t start_hrtime, end_hrtime;
@@ -31,7 +32,7 @@ int ping(const char* host, int cnt) {
     sockaddr_u peeraddr;
     socklen_t addrlen = sizeof(peeraddr);
     memset(&peeraddr, 0, addrlen);
-    int ret = Resolver(host, &peeraddr);
+    int ret = ResolveAddr(host, &peeraddr);
     if (ret != 0) return ret;
     sockaddr_ip(&peeraddr, ip, sizeof(ip));
     int sockfd = socket(peeraddr.sa.sa_family, SOCK_RAW, IPPROTO_ICMP);
@@ -58,11 +59,11 @@ int ping(const char* host, int cnt) {
 
     icmp_req->icmp_type = ICMP_ECHO;
     icmp_req->icmp_code = 0;
-    icmp_req->icmp_id = getpid();
+    icmp_req->icmp_id = pid16;
     for (int i = 0; i < sendbytes - sizeof(icmphdr_t); ++i) {
         icmp_req->icmp_data[i] = i;
     }
-    start_tick = gettick();
+    start_tick = gettick_ms();
     while (cnt-- > 0) {
         // NOTE: checksum
         icmp_req->icmp_seq = ++seq;
@@ -91,7 +92,7 @@ int ping(const char* host, int cnt) {
         if (icmp_len == sendbytes) {
             icmp_res = (icmp_t*)(recvbuf + ipheader->ihl*4);
             if (icmp_res->icmp_type == ICMP_ECHOREPLY &&
-                icmp_res->icmp_id == getpid() &&
+                icmp_res->icmp_id == pid16 &&
                 icmp_res->icmp_seq == seq) {
                 valid = true;
             }
@@ -107,9 +108,9 @@ int ping(const char* host, int cnt) {
         printd("%d bytes from %s: icmp_seq=%u ttl=%u time=%.1f ms\n", icmp_len, ip, seq, ipheader->ttl, rtt);
         fflush(stdout);
         ++ok_cnt;
-        if (cnt > 0) sleep(1); // sleep a while, then agian
+        if (cnt > 0) hv_sleep(1); // sleep a while, then agian
     }
-    end_tick = gettick();
+    end_tick = gettick_ms();
     printd("--- %s ping statistics ---\n", host);
     printd("%d packets transmitted, %d received, %d%% packet loss, time %d ms\n",
         send_cnt, recv_cnt, (send_cnt-recv_cnt)*100/(send_cnt==0?1:send_cnt), end_tick-start_tick);

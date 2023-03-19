@@ -1,17 +1,39 @@
-#! /bin/bash
+#!/bin/bash
+
+host=127.0.0.1
+port=2000
+connections=100
+duration=10
+threads=2
+sendbytes=1024
+
+while getopts 'h:p:c:d:t:' opt
+do
+    case $opt in
+        h) host=$OPTARG;;
+        p) port=$OPTARG;;
+        c) connections=$OPTARG;;
+        d) duration=$OPTARG;;
+        t) threads=$OPTARG;;
+        *) exit -1;;
+    esac
+done
+
+SCRIPT_DIR=$(cd `dirname $0`; pwd)
+cd ${SCRIPT_DIR}/..
 
 killall_echo_servers() {
     #sudo killall libevent_echo libev_echo libuv_echo libhv_echo asio_echo poco_echo muduo_echo
-    ps aux | grep _echo | grep -v grep | awk '{print $2}' | xargs sudo kill -9
+    if [ $(ps aux | grep _echo | grep -v grep | wc -l) -gt 0 ]; then
+        ps aux | grep _echo | grep -v grep | awk '{print $2}' | xargs sudo kill -9
+    fi
 }
 
 export LD_LIBRARY_PATH=lib:$LD_LIBRARY_PATH
 
-ip=127.0.0.1
-sport=2000
-port=$sport
-
 killall_echo_servers
+
+sport=$port
 
 if [ -x bin/libevent_echo ]; then
     let port++
@@ -57,14 +79,9 @@ fi
 
 sleep 1
 
-client=2
-time=60
-if [ $# -gt 0 ]; then
-    time=$1
-fi
 for ((p=$sport+1; p<=$port; ++p)); do
     echo -e "\n==============$p====================================="
-    bin/webbench -q -c $client -t $time $ip:$p
+    bin/pingpong_client -H $host -p $p -c $connections -d $duration -t $threads -b $sendbytes
     sleep 1
 done
 

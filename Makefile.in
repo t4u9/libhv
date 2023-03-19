@@ -13,10 +13,11 @@
 # make all \
 # TARGET=libxx \
 # TARGET_TYPE=SHARED \
+# BUILD_TYPE=DEBUG \
 # CROSS_COMPILE=arm-linux-androideabi- \
 # SRCDIRS="src/base src/event" \
-# INCDIRS="src/utils" \
-# SRCS="src/utils/hmain.cpp src/utils/iniparser.cpp" \
+# INCDIRS="src/util" \
+# SRCS="src/util/hmain.cpp src/util/iniparser.cpp" \
 # DEFINES=USE_OPENCV \
 # LIBS="opencv_core opencv_highgui"
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -67,9 +68,10 @@ endif
 
 # CFLAGS, CXXFLAGS, ARFLAGS
 ifeq ($(BUILD_TYPE), DEBUG)
-	DEFAULT_CFLAGS = -g -Wall
+	DEFAULT_CFLAGS = -g -Wall -O0
+else
+	DEFAULT_CFLAGS += -O2
 endif
-DEFAULT_CFLAGS += -O2
 
 CFLAGS ?= $(DEFAULT_CFLAGS)
 CXXFLAGS ?= $(DEFAULT_CFLAGS)
@@ -127,10 +129,6 @@ else
 	CPPFLAGS += -DNDEBUG
 endif
 
-ifeq ($(ENABLE_IPV6), yes)
-	CPPFLAGS += -DENABLE_IPV6
-endif
-
 ifeq ($(ENABLE_UDS), yes)
 	CPPFLAGS += -DENABLE_UDS
 endif
@@ -164,6 +162,16 @@ endif
 ifeq ($(WITH_OPENSSL), yes)
 	CPPFLAGS += -DWITH_OPENSSL
 	LDFLAGS += -lssl -lcrypto
+else
+ifeq ($(WITH_GNUTLS), yes)
+	CPPFLAGS += -DWITH_GNUTLS
+	LDFLAGS += -lgnutls
+else
+ifeq ($(WITH_MBEDTLS), yes)
+	CPPFLAGS += -DWITH_MBEDTLS
+	LDFLAGS += -lmbedtls -lmbedx509 -lmbedcrypto
+endif
+endif
 endif
 
 LDFLAGS += $(addprefix -L, $(LIBDIRS))
@@ -181,16 +189,22 @@ ifeq ($(OS), Android)
 	LDFLAGS += -lstdc++ -lm -llog -ldl
 else
 	LDFLAGS += -lstdc++ -lpthread -lm -ldl
-ifneq ($(findstring gcc, $(CC_VERSION)), )
-	LDFLAGS += -lrt # for clock_gettime, clang not -lrt
+	LINK_RT=$(shell echo "int main(){return 0;}" | $(CC) -x c - -lrt 2>&1)
+ifeq ($(LINK_RT), )
+	LDFLAGS += -lrt
 endif
 endif
 endif
 
-override SRCS += $(foreach dir, $(SRCDIRS), $(wildcard $(dir)/*.c $(dir)/*.cc $(dir)/*.cpp))
-ifeq ($(SRCS), )
-	SRCS = $(wildcard *.c *.cc *.cpp)
+ifeq ($(OS), Darwin)
+	LDFLAGS += -framework CoreFoundation -framework Security
 endif
+
+ALL_SRCS += $(foreach dir, $(SRCDIRS), $(wildcard $(dir)/*.c $(dir)/*.cc $(dir)/*.cpp))
+ifeq ($(ALL_SRCS), )
+	ALL_SRCS = $(wildcard *.c *.cc *.cpp)
+endif
+override SRCS += $(filter-out %_test.c %_test.cc %_test.cpp, $(ALL_SRCS))
 # OBJS += $(patsubst %.c, %.o, $(SRCS))
 # OBJS += $(patsubst %.cc, %.o, $(SRCS))
 # OBJS += $(patsubst %.cpp, %.o, $(SRCS))
@@ -267,6 +281,7 @@ install:
 	$(CP) $(INCDIR)/* $(PREFIX)/$(INCDIR)/
 	$(CP) $(LIBDIR)/* $(PREFIX)/$(LIBDIR)/
 	$(CP) $(BINDIR)/* $(PREFIX)/$(BINDIR)/
+	$(LDCONFIG)
 
 uninstall:
 	$(RM) $(INSTALLED_INCS)

@@ -1,25 +1,14 @@
-#ifndef HTTP1_PARSER_H_
-#define HTTP1_PARSER_H_
+#ifndef HV_HTTP1_PARSER_H_
+#define HV_HTTP1_PARSER_H_
 
 #include "HttpParser.h"
 #include "http_parser.h"
 
-enum http_parser_state {
-    HP_START_REQ_OR_RES,
-    HP_MESSAGE_BEGIN,
-    HP_URL,
-    HP_STATUS,
-    HP_HEADER_FIELD,
-    HP_HEADER_VALUE,
-    HP_HEADERS_COMPLETE,
-    HP_BODY,
-    HP_MESSAGE_COMPLETE
-};
-
 class Http1Parser : public HttpParser {
 public:
-    static http_parser_settings*    cbs;
+    static http_parser_settings     cbs;
     http_parser                     parser;
+    int                             flags;
     http_parser_state               state;
     HttpMessage*                    submited;
     HttpMessage*                    parsed;
@@ -33,7 +22,14 @@ public:
     virtual ~Http1Parser();
 
     void handle_header() {
-        if (header_field.size() != 0 && header_value.size() != 0) {
+        if (header_field.size() != 0) {
+            if (stricmp(header_field.c_str(), "Set-CooKie") == 0 ||
+                stricmp(header_field.c_str(), "Cookie") == 0) {
+                HttpCookie cookie;
+                if (cookie.parse(header_value)) {
+                    parsed->cookies.emplace_back(cookie);
+                }
+            }
             parsed->headers[header_field] = header_value;
             header_field.clear();
             header_value.clear();
@@ -54,7 +50,7 @@ public:
     }
 
     virtual int FeedRecvData(const char* data, size_t len) {
-        return http_parser_execute(&parser, cbs, data, len);
+        return http_parser_execute(&parser, &cbs, data, len);
     }
 
     virtual int  GetState() {
@@ -85,6 +81,13 @@ public:
     // SubmitRequest -> while(GetSendData) {send} -> InitResponse -> do {recv -> FeedRecvData} while(WantRecv)
     virtual int SubmitRequest(HttpRequest* req) {
         submited = req;
+        if (req) {
+            if (req->method == HTTP_HEAD) {
+                flags |= F_SKIPBODY;
+            } else {
+                flags &= ~F_SKIPBODY;
+            }
+        }
         return 0;
     }
 
@@ -115,6 +118,13 @@ public:
         submited = res;
         return 0;
     }
+
+    // HttpMessage::http_cb
+    int invokeHttpCb(const char* data = NULL, size_t size = 0) {
+        if (parsed->http_cb == NULL) return -1;
+        parsed->http_cb(parsed, state, data, size);
+        return 0;
+    }
 };
 
-#endif // HTTP1_PARSER_H_
+#endif // HV_HTTP1_PARSER_H_

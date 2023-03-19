@@ -16,10 +16,13 @@
     #define HV_EXPORT
 #endif
 
+// HV_INLINE
+#define HV_INLINE static inline
+
 // HV_DEPRECATED
 #if defined(HV_NO_DEPRECATED)
 #define HV_DEPRECATED
-#elif defined(_GNUC_) || defined(__clang__)
+#elif defined(__GNUC__) || defined(__clang__)
 #define HV_DEPRECATED   __attribute__((deprecated))
 #elif defined(_MSC_VER)
 #define HV_DEPRECATED   __declspec(deprecated)
@@ -129,5 +132,26 @@ struct s
 #define BEGIN_NAMESPACE_HV  BEGIN_NAMESPACE(hv)
 #define END_NAMESPACE_HV    END_NAMESPACE(hv)
 #define USING_NAMESPACE_HV  USING_NAMESPACE(hv)
+
+// MSVC ports
+#ifdef _MSC_VER
+
+#pragma warning (disable: 4251) // STL dll
+#pragma warning (disable: 4275) // dll-interface
+
+#if _MSC_VER < 1900 // < VS2015
+
+#ifndef __cplusplus
+#ifndef inline
+#define inline __inline
+#endif
+#endif
+
+#ifndef snprintf
+#define snprintf _snprintf
+#endif
+
+#endif
+#endif
 
 #endif // HV_EXPORT_H_

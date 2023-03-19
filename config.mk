@@ -1,28 +1,20 @@
-# modules
-# include icmp dns ftp smtp
-WITH_PROTOCOL=yes
 
+PREFIX=/usr/local
+INSTALL_INCDIR=$(PREFIX)/include/hv
+INSTALL_LIBDIR=$(PREFIX)/lib
+WITH_PROTOCOL=no
+WITH_EVPP=yes
 WITH_HTTP=yes
 WITH_HTTP_SERVER=yes
 WITH_HTTP_CLIENT=yes
-
-# WITH_CONSUL need WITH_HTTP_CLIENT=yes
-WITH_CONSUL=no
-
-# features
-# base/hsocket.c: replace gethostbyname with getaddrinfo
-ENABLE_IPV6=no
-# base/hsocket.h: Unix Domain Socket
+WITH_MQTT=no
 ENABLE_UDS=no
-# base/RAII.cpp: Windows MiniDumpWriteDump
 ENABLE_WINDUMP=no
-# http/http_content.h: QueryParams,MultiPart
 USE_MULTIMAP=no
-
-# dependencies
-# for http/client
 WITH_CURL=no
-# for http2
 WITH_NGHTTP2=no
-# for SSL/TLS
 WITH_OPENSSL=no
+WITH_GNUTLS=no
+WITH_MBEDTLS=no
+WITH_KCP=no
+CONFIG_DATE=20220224

@@ -28,15 +28,37 @@ typedef struct offset_buf_s {
 #ifdef __cplusplus
     offset_buf_s() {
         base = NULL;
-        len = offset = 0;
+        len = 0;
+        offset = 0;
     }
 
     offset_buf_s(void* data, size_t len) {
         this->base = (char*)data;
         this->len = len;
+        offset = 0;
     }
 #endif
 } offset_buf_t;
+
+typedef struct fifo_buf_s {
+    char*  base;
+    size_t len;
+    size_t head;
+    size_t tail;
+#ifdef __cplusplus
+    fifo_buf_s() {
+        base = NULL;
+        len = 0;
+        head = tail = 0;
+    }
+
+    fifo_buf_s(void* data, size_t len) {
+        this->base = (char*)data;
+        this->len = len;
+        head = tail = 0;
+    }
+#endif
+} fifo_buf_t;
 
 #ifdef __cplusplus
 class HBuf : public hbuf_t {
@@ -56,9 +78,7 @@ public:
     void*  data() { return base; }
     size_t size() { return len; }
 
-    bool isNull() {
-        return base == NULL || len == 0;
-    }
+    bool isNull() { return base == NULL || len == 0; }
 
     void cleanup() {
         if (cleanup_) {
@@ -75,7 +95,7 @@ public:
             HV_ALLOC(base, cap);
         }
         else {
-            base = (char*)safe_realloc(base, cap, len);
+            base = (char*)hv_realloc(base, cap, len);
         }
         len = cap;
         cleanup_ = true;
@@ -102,14 +122,13 @@ public:
     HVLBuf(size_t cap) : HBuf(cap) {_offset = _size = 0;}
     virtual ~HVLBuf() {}
 
-    char* data() { return base+_offset; }
+    char* data() { return base + _offset; }
     size_t size() { return _size; }
 
     void push_front(void* ptr, size_t len) {
         if (len > this->len - _size) {
             size_t newsize = MAX(this->len, len)*2;
-            base = (char*)safe_realloc(base, newsize, this->len);
-            this->len = newsize;
+            resize(newsize);
         }
 
         if (_offset < len) {
@@ -126,8 +145,7 @@ public:
     void push_back(void* ptr, size_t len) {
         if (len > this->len - _size) {
             size_t newsize = MAX(this->len, len)*2;
-            base = (char*)safe_realloc(base, newsize, this->len);
-            this->len = newsize;
+            resize(newsize);
         }
         else if (len > this->len - _offset - _size) {
             // move => start
@@ -144,7 +162,7 @@ public:
                 memcpy(ptr, data(), len);
             }
             _offset += len;
-            if (_offset >= len) _offset = 0;
+            if (_offset >= this->len) _offset = 0;
             _size   -= len;
         }
     }

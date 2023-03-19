@@ -4,15 +4,17 @@
 
 #include <string.h>
 
-std::string dump_query_params(QueryParams& query_params) {
+BEGIN_NAMESPACE_HV
+
+std::string dump_query_params(const QueryParams& query_params) {
     std::string query_string;
     for (auto& pair : query_params) {
         if (query_string.size() != 0) {
             query_string += '&';
         }
-        query_string += url_escape(pair.first.c_str());
+        query_string += HUrl::escape(pair.first);
         query_string += '=';
-        query_string += url_escape(pair.second.c_str());
+        query_string += HUrl::escape(pair.second);
     }
     return query_string;
 }
@@ -32,10 +34,10 @@ int parse_query_params(const char* query_string, QueryParams& query_params) {
     int value_len = 0;
     while (*p != '\0') {
         if (*p == '&') {
-            if (key_len && value_len) {
+            if (key_len /* && value_len */) {
                 std::string strkey = std::string(key, key_len);
                 std::string strvalue = std::string(value, value_len);
-                query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
+                query_params[HUrl::unescape(strkey)] = HUrl::unescape(strvalue);
                 key_len = value_len = 0;
             }
             state = s_key;
@@ -50,10 +52,10 @@ int parse_query_params(const char* query_string, QueryParams& query_params) {
         }
         ++p;
     }
-    if (key_len && value_len) {
+    if (key_len /* && value_len */) {
         std::string strkey = std::string(key, key_len);
         std::string strvalue = std::string(value, value_len);
-        query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
+        query_params[HUrl::unescape(strkey)] = HUrl::unescape(strvalue);
         key_len = value_len = 0;
     }
     return query_params.size() == 0 ? -1 : 0;
@@ -61,10 +63,8 @@ int parse_query_params(const char* query_string, QueryParams& query_params) {
 
 #ifndef WITHOUT_HTTP_CONTENT
 
-#include <sys/types.h>
-#include <sys/stat.h>
-
 #include "hstring.h" // for split
+#include "hfile.h"
 #include "httpdef.h" // for http_content_type_str_by_suffix
 
 std::string dump_multipart(MultiPart& mp, const char* boundary) {
@@ -80,17 +80,12 @@ std::string dump_multipart(MultiPart& mp, const char* boundary) {
         auto& form = pair.second;
         if (form.filename.size() != 0) {
             if (form.content.size() == 0) {
-                FILE* fp = fopen(form.filename.c_str(), "r");
-                if (fp) {
-                    struct stat st;
-                    if (stat(form.filename.c_str(), &st) == 0 && st.st_size != 0) {
-                        form.content.resize(st.st_size);
-                        fread((void*)form.content.data(), 1, st.st_size, fp);
-                    }
-                    fclose(fp);
+                HFile file;
+                if (file.open(form.filename.c_str(), "rb") == 0) {
+                    file.readall(form.content);
                 }
             }
-            snprintf(c_str, sizeof(c_str), "; filename=\"%s\"", basename(form.filename).c_str());
+            snprintf(c_str, sizeof(c_str), "; filename=\"%s\"", hv_basename(form.filename.c_str()));
             str += c_str;
             const char* suffix = strrchr(form.filename.c_str(), '.');
             if (suffix) {
@@ -108,7 +103,7 @@ std::string dump_multipart(MultiPart& mp, const char* boundary) {
     }
     str += "--";
     str += boundary;
-    str += "--";
+    str += "--\r\n";
     return str;
 }
 
@@ -141,7 +136,7 @@ struct multipart_parser_userdata {
                 StringList kv = split(trim(str, " "), '=');
                 if (kv.size() == 2) {
                     const char* key = kv.begin()->c_str();
-                    string value = *(kv.begin() + 1);
+                    std::string value = *(kv.begin() + 1);
                     value = trim_pairs(value, "\"\"\'\'");
                     if (strcmp(key, "name") == 0) {
                         name = value;
@@ -216,7 +211,7 @@ static int on_body_end(multipart_parser* parser) {
     userdata->state = MP_BODY_END;
     return 0;
 }
-int parse_multipart(std::string& str, MultiPart& mp, const char* boundary) {
+int parse_multipart(const std::string& str, MultiPart& mp, const char* boundary) {
     //printf("boundary=%s\n", boundary);
     std::string __boundary("--");
     __boundary += boundary;
@@ -238,11 +233,11 @@ int parse_multipart(std::string& str, MultiPart& mp, const char* boundary) {
     return nparse == str.size() ? 0 : -1;
 }
 
-std::string dump_json(Json& json) {
-    return json.dump();
+std::string dump_json(const hv::Json& json, int indent) {
+    return json.dump(indent);
 }
 
-int parse_json(const char* str, Json& json, std::string& errmsg) {
+int parse_json(const char* str, hv::Json& json, std::string& errmsg) {
     try {
         json = nlohmann::json::parse(str);
     }
@@ -253,3 +248,5 @@ int parse_json(const char* str, Json& json, std::string& errmsg) {
     return (json.is_discarded() || json.is_null()) ? -1 : 0;
 }
 #endif
+
+END_NAMESPACE_HV

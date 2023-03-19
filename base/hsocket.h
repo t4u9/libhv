@@ -17,7 +17,7 @@
 
 BEGIN_EXTERN_C
 
-static inline int socket_errno() {
+HV_INLINE int socket_errno() {
 #ifdef OS_WIN
     return WSAGetLastError();
 #else
@@ -27,28 +27,53 @@ static inline int socket_errno() {
 HV_EXPORT const char* socket_strerror(int err);
 
 #ifdef OS_WIN
+
 typedef int socklen_t;
-static inline int blocking(int sockfd) {
+
+void WSAInit();
+void WSADeinit();
+
+HV_INLINE int blocking(int sockfd) {
     unsigned long nb = 0;
     return ioctlsocket(sockfd, FIONBIO, &nb);
 }
-static inline int nonblocking(int sockfd) {
+HV_INLINE int nonblocking(int sockfd) {
     unsigned long nb = 1;
     return ioctlsocket(sockfd, FIONBIO, &nb);
 }
+
+#ifndef poll
 #define poll        WSAPoll
+#endif
+
 #undef  EAGAIN
 #define EAGAIN      WSAEWOULDBLOCK
+
 #undef  EINPROGRESS
 #define EINPROGRESS WSAEINPROGRESS
+
 #undef  ENOTSOCK
 #define ENOTSOCK    WSAENOTSOCK
+
+#undef  EMSGSIZE
+#define EMSGSIZE    WSAEMSGSIZE
+
 #else
+
 #define blocking(s)     fcntl(s, F_SETFL, fcntl(s, F_GETFL) & ~O_NONBLOCK)
 #define nonblocking(s)  fcntl(s, F_SETFL, fcntl(s, F_GETFL) |  O_NONBLOCK)
+
 typedef int         SOCKET;
 #define INVALID_SOCKET  -1
-#define closesocket close
+
+HV_INLINE int closesocket(int sockfd) {
+    return close(sockfd);
+}
+
+#endif
+
+#ifndef SAFE_CLOSESOCKET
+#define SAFE_CLOSESOCKET(fd)  do {if ((fd) >= 0) {closesocket(fd); (fd) = -1;}} while(0)
 #endif
 
 //-----------------------------sockaddr_u----------------------------------------------
@@ -61,61 +86,29 @@ typedef union {
 #endif
 } sockaddr_u;
 
+HV_EXPORT bool is_ipv4(const char* host);
+HV_EXPORT bool is_ipv6(const char* host);
+HV_INLINE bool is_ipaddr(const char* host) {
+    return is_ipv4(host) || is_ipv6(host);
+}
+
 // @param host: domain or ip
 // @retval 0:succeed
-HV_EXPORT int Resolver(const char* host, sockaddr_u* addr);
+HV_EXPORT int ResolveAddr(const char* host, sockaddr_u* addr);
 
-static inline const char* sockaddr_ip(sockaddr_u* addr, char *ip, int len) {
-    if (addr->sa.sa_family == AF_INET) {
-        return inet_ntop(AF_INET, &addr->sin.sin_addr, ip, len);
-    }
-    else if (addr->sa.sa_family == AF_INET6) {
-        return inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip, len);
-    }
-    return ip;
-}
-
-static inline uint16_t sockaddr_port(sockaddr_u* addr) {
-    uint16_t port = 0;
-    if (addr->sa.sa_family == AF_INET) {
-        port = htons(addr->sin.sin_port);
-    }
-    else if (addr->sa.sa_family == AF_INET6) {
-        port = htons(addr->sin6.sin6_port);
-    }
-    return port;
-}
-
-static inline int sockaddr_set_ip(sockaddr_u* addr, const char* host) {
-    if (!host || *host == '\0') {
-        addr->sin.sin_family = AF_INET;
-        addr->sin.sin_addr.s_addr = htonl(INADDR_ANY);
-        return 0;
-    }
-    return Resolver(host, addr);
-}
-
-static inline void sockaddr_set_port(sockaddr_u* addr, int port) {
-    if (addr->sa.sa_family == AF_INET) {
-        addr->sin.sin_port = ntohs(port);
-    }
-    else if (addr->sa.sa_family == AF_INET6) {
-        addr->sin6.sin6_port = ntohs(port);
-    }
-}
-
-static inline int sockaddr_set_ipport(sockaddr_u* addr, const char* host, int port) {
-    int ret = sockaddr_set_ip(addr, host);
-    if (ret != 0) return ret;
-    sockaddr_set_port(addr, port);
-    return 0;
-}
+HV_EXPORT const char* sockaddr_ip(sockaddr_u* addr, char *ip, int len);
+HV_EXPORT uint16_t sockaddr_port(sockaddr_u* addr);
+HV_EXPORT int sockaddr_set_ip(sockaddr_u* addr, const char* host);
+HV_EXPORT void sockaddr_set_port(sockaddr_u* addr, int port);
+HV_EXPORT int sockaddr_set_ipport(sockaddr_u* addr, const char* host, int port);
+HV_EXPORT socklen_t sockaddr_len(sockaddr_u* addr);
+HV_EXPORT const char* sockaddr_str(sockaddr_u* addr, char* buf, int len);
 
 //#define INET_ADDRSTRLEN   16
 //#define INET6_ADDRSTRLEN  46
 #ifdef ENABLE_UDS
 #define SOCKADDR_STRLEN     sizeof(((struct sockaddr_un*)(NULL))->sun_path)
-static inline void sockaddr_set_path(sockaddr_u* addr, const char* path) {
+HV_INLINE void sockaddr_set_path(sockaddr_u* addr, const char* path) {
     addr->sa.sa_family = AF_UNIX;
     strncpy(addr->sun.sun_path, path, sizeof(addr->sun.sun_path));
 }
@@ -123,43 +116,7 @@ static inline void sockaddr_set_path(sockaddr_u* addr, const char* path) {
 #define SOCKADDR_STRLEN     64 // ipv4:port | [ipv6]:port
 #endif
 
-static inline socklen_t sockaddr_len(sockaddr_u* addr) {
-    if (addr->sa.sa_family == AF_INET) {
-        return sizeof(struct sockaddr_in);
-    }
-    else if (addr->sa.sa_family == AF_INET6) {
-        return sizeof(struct sockaddr_in6);
-    }
-#ifdef ENABLE_UDS
-    else if (addr->sa.sa_family == AF_UNIX) {
-        return sizeof(struct sockaddr_un);
-    }
-#endif
-    return sizeof(sockaddr_u);
-}
-
-static inline const char* sockaddr_str(sockaddr_u* addr, char* buf, int len) {
-    char ip[SOCKADDR_STRLEN] = {0};
-    uint16_t port = 0;
-    if (addr->sa.sa_family == AF_INET) {
-        inet_ntop(AF_INET, &addr->sin.sin_addr, ip, len);
-        port = htons(addr->sin.sin_port);
-        snprintf(buf, len, "%s:%d", ip, port);
-    }
-    else if (addr->sa.sa_family == AF_INET6) {
-        inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip, len);
-        port = htons(addr->sin6.sin6_port);
-        snprintf(buf, len, "[%s]:%d", ip, port);
-    }
-#ifdef ENABLE_UDS
-    else if (addr->sa.sa_family == AF_UNIX) {
-        snprintf(buf, len, "%s", addr->sun.sun_path);
-    }
-#endif
-    return buf;
-}
-
-static inline void sockaddr_print(sockaddr_u* addr) {
+HV_INLINE void sockaddr_print(sockaddr_u* addr) {
     char buf[SOCKADDR_STRLEN] = {0};
     sockaddr_str(addr, buf, sizeof(buf));
     puts(buf);
@@ -180,12 +137,12 @@ HV_EXPORT int Bind(int port, const char* host DEFAULT(ANYADDR), int type DEFAULT
 HV_EXPORT int Listen(int port, const char* host DEFAULT(ANYADDR));
 
 // @return connfd
-// Resolver -> socket -> nonblocking -> connect
+// ResolveAddr -> socket -> nonblocking -> connect
 HV_EXPORT int Connect(const char* host, int port, int nonblock DEFAULT(0));
 // Connect(host, port, 1)
 HV_EXPORT int ConnectNonblock(const char* host, int port);
 // Connect(host, port, 1) -> select -> blocking
-#define DEFAULT_CONNECT_TIMEOUT 5000 // ms
+#define DEFAULT_CONNECT_TIMEOUT 10000 // ms
 HV_EXPORT int ConnectTimeout(const char* host, int port, int ms DEFAULT(DEFAULT_CONNECT_TIMEOUT));
 
 #ifdef ENABLE_UDS
@@ -199,21 +156,21 @@ HV_EXPORT int ConnectUnixTimeout(const char* path, int ms DEFAULT(DEFAULT_CONNEC
 // Just implement Socketpair(AF_INET, SOCK_STREAM, 0, sv);
 HV_EXPORT int Socketpair(int family, int type, int protocol, int sv[2]);
 
-static inline int tcp_nodelay(int sockfd, int on DEFAULT(1)) {
+HV_INLINE int tcp_nodelay(int sockfd, int on DEFAULT(1)) {
     return setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (const char*)&on, sizeof(int));
 }
 
-static inline int tcp_nopush(int sockfd, int on DEFAULT(1)) {
+HV_INLINE int tcp_nopush(int sockfd, int on DEFAULT(1)) {
 #ifdef TCP_NOPUSH
     return setsockopt(sockfd, IPPROTO_TCP, TCP_NOPUSH, (const char*)&on, sizeof(int));
 #elif defined(TCP_CORK)
     return setsockopt(sockfd, IPPROTO_TCP, TCP_CORK, (const char*)&on, sizeof(int));
 #else
-    return -10;
+    return 0;
 #endif
 }
 
-static inline int tcp_keepalive(int sockfd, int on DEFAULT(1), int delay DEFAULT(60)) {
+HV_INLINE int tcp_keepalive(int sockfd, int on DEFAULT(1), int delay DEFAULT(60)) {
     if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, (const char*)&on, sizeof(int)) != 0) {
         return socket_errno();
     }
@@ -230,12 +187,12 @@ static inline int tcp_keepalive(int sockfd, int on DEFAULT(1), int delay DEFAULT
 #endif
 }
 
-static inline int udp_broadcast(int sockfd, int on DEFAULT(1)) {
+HV_INLINE int udp_broadcast(int sockfd, int on DEFAULT(1)) {
     return setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (const char*)&on, sizeof(int));
 }
 
 // send timeout
-static inline int so_sndtimeo(int sockfd, int timeout) {
+HV_INLINE int so_sndtimeo(int sockfd, int timeout) {
 #ifdef OS_WIN
     return setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(int));
 #else
@@ -245,12 +202,57 @@ static inline int so_sndtimeo(int sockfd, int timeout) {
 }
 
 // recv timeout
-static inline int so_rcvtimeo(int sockfd, int timeout) {
+HV_INLINE int so_rcvtimeo(int sockfd, int timeout) {
 #ifdef OS_WIN
     return setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(int));
 #else
     struct timeval tv = {timeout/1000, (timeout%1000)*1000};
     return setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+}
+
+// send buffer size
+HV_INLINE int so_sndbuf(int sockfd, int len) {
+    return setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, (const char*)&len, sizeof(int));
+}
+
+// recv buffer size
+HV_INLINE int so_rcvbuf(int sockfd, int len) {
+    return setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (const char*)&len, sizeof(int));
+}
+
+HV_INLINE int so_reuseaddr(int sockfd, int on DEFAULT(1)) {
+#ifdef SO_REUSEADDR
+    // NOTE: SO_REUSEADDR allow to reuse sockaddr of TIME_WAIT status
+    return setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof(int));
+#else
+    return 0;
+#endif
+}
+
+HV_INLINE int so_reuseport(int sockfd, int on DEFAULT(1)) {
+#ifdef SO_REUSEPORT
+    // NOTE: SO_REUSEPORT allow multiple sockets to bind same port
+    return setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, (const char*)&on, sizeof(int));
+#else
+    return 0;
+#endif
+}
+
+HV_INLINE int so_linger(int sockfd, int timeout DEFAULT(1)) {
+#ifdef SO_LINGER
+    struct linger linger;
+    if (timeout >= 0) {
+        linger.l_onoff = 1;
+        linger.l_linger = timeout;
+    } else {
+        linger.l_onoff = 0;
+        linger.l_linger = 0;
+    }
+    // NOTE: SO_LINGER change the default behavior of close, send RST, avoid TIME_WAIT
+    return setsockopt(sockfd, SOL_SOCKET, SO_LINGER, (const char*)&linger, sizeof(linger));
+#else
+    return 0;
 #endif
 }
 

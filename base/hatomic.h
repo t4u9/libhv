@@ -14,7 +14,7 @@ using std::atomic_long;
 
 #else
 
-#include "hconfig.h"    // for HAVE_STDATOMIC_H
+#include "hplatform.h"  // for HAVE_STDATOMIC_H
 #if HAVE_STDATOMIC_H
 
 // c11
@@ -28,8 +28,6 @@ using std::atomic_long;
 #define ATOMIC_DEC(p)               ATOMIC_SUB(p, 1)
 
 #else
-
-#include "hplatform.h"  // for bool, size_t
 
 typedef volatile bool               atomic_bool;
 typedef volatile char               atomic_char;
@@ -47,6 +45,12 @@ typedef volatile size_t             atomic_size_t;
 typedef struct atomic_flag { atomic_bool _Value; } atomic_flag;
 
 #ifdef _WIN32
+
+#define ATOMIC_FLAG_TEST_AND_SET    atomic_flag_test_and_set
+static inline bool atomic_flag_test_and_set(atomic_flag* p) {
+    // return InterlockedIncrement((LONG*)&p->_Value, 1);
+    return InterlockedCompareExchange((LONG*)&p->_Value, 1, 0);
+}
 
 #define ATOMIC_ADD          InterlockedAdd
 #define ATOMIC_SUB(p, n)    InterlockedAdd(p, -n)
